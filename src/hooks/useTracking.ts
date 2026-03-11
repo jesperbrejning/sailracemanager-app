@@ -23,6 +23,7 @@ import {
   forceFlush,
   updateSendCallback,
   updateLocationCallback,
+  getTotalCollected,
 } from '../services/backgroundTracking';
 import {
   saveActiveSession,
@@ -144,7 +145,7 @@ export function useTracking() {
       currentPosition: point,
       accuracy: point.accuracy ?? null,
       speedKnots,
-      pointsCollected: pointCountRef.current,
+      pointsCollected: getTotalCollected(), // Use global counter (foreground + background)
       distanceMeters: Math.round(totalDistanceRef.current),
       error: null,
     }));

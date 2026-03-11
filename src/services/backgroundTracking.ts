@@ -30,6 +30,7 @@ const TASK_NAME = CONFIG.GPS.BACKGROUND_TASK_NAME;
 let pointBuffer: TrackingPoint[] = [];
 let activeSessionId: number | null = null;
 let lastTimestamp = 0;
+let totalCollectedCount = 0; // Counts ALL points (foreground + background)
 let sendPointsCallback: ((sessionId: number, points: TrackingPoint[]) => Promise<void>) | null = null;
 let onLocationUpdateCallback: ((point: TrackingPoint) => void) | null = null;
 
@@ -66,6 +67,7 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
     lastTimestamp = point.timestamp;
 
     pointBuffer.push(point);
+    totalCollectedCount += 1;
 
     // Notify foreground if callback is set
     if (onLocationUpdateCallback) {
@@ -219,6 +221,7 @@ export async function startBackgroundTracking(
   pointBuffer = [];
   activeSessionId = sessionId;
   lastTimestamp = 0;
+  totalCollectedCount = 0;
   sendPointsCallback = onSendPoints;
   onLocationUpdateCallback = onUpdate ?? null;
 
@@ -277,6 +280,7 @@ export async function startBackgroundTracking(
         lastTimestamp = point.timestamp;
 
         pointBuffer.push(point);
+        totalCollectedCount += 1;
 
         if (onLocationUpdateCallback) {
           onLocationUpdateCallback(point);
@@ -373,4 +377,12 @@ export function updateLocationCallback(
   callback: ((point: TrackingPoint) => void) | null
 ): void {
   onLocationUpdateCallback = callback;
+}
+
+/**
+ * Get the total number of GPS points collected (foreground + background).
+ * This is the authoritative counter for "collected" in the UI.
+ */
+export function getTotalCollected(): number {
+  return totalCollectedCount;
 }
