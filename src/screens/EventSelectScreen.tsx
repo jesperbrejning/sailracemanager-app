@@ -1,8 +1,8 @@
 /**
  * Event Selection Screen
  * 
- * Allows the user to select an event/race to track for,
- * or start a free sailing (training) session without an event.
+ * Shows only events the user is registered for (as skipper, crew, team, helper, or judge).
+ * Users can also start a free sailing (training) session without an event.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -19,8 +19,21 @@ import {
   RefreshControl,
 } from 'react-native';
 import { trpc } from '../services/trpc';
-import type { SailEvent } from '../types/tracking';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+// Type matching the server's event.myTrackingEvents response
+interface TrackingEvent {
+  id: number;
+  name: string;
+  raceType: string | null;
+  location: string | null;
+  country: string | null;
+  organizer: string | null;
+  boatClass: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  roles: string[];
+}
 
 type Props = {
   navigation: NativeStackNavigationProp<any>;
@@ -30,15 +43,14 @@ export default function EventSelectScreen({ navigation }: Props) {
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch events from backend
-  // Server endpoint is event.list (singular) with no input params
-  const eventsQuery = trpc.event.list.useQuery(
+  // Fetch only events the user is registered for
+  const eventsQuery = trpc.event.myTrackingEvents.useQuery(
     undefined,
     { retry: 1 }
   );
 
   const events = useMemo(() => {
-    const list = (eventsQuery.data as SailEvent[] | undefined) ?? [];
+    const list = (eventsQuery.data as TrackingEvent[] | undefined) ?? [];
     if (!search.trim()) return list;
     const q = search.toLowerCase();
     return list.filter(
@@ -56,7 +68,7 @@ export default function EventSelectScreen({ navigation }: Props) {
     setRefreshing(false);
   };
 
-  const handleSelectEvent = (event: SailEvent) => {
+  const handleSelectEvent = (event: TrackingEvent) => {
     navigation.navigate('ActiveTracking', {
       eventId: event.id,
       eventName: event.name,
@@ -70,7 +82,19 @@ export default function EventSelectScreen({ navigation }: Props) {
     });
   };
 
-  const renderEvent = ({ item }: { item: SailEvent }) => (
+  const formatRoles = (roles: string[]) => {
+    const roleLabels: Record<string, string> = {
+      skipper: 'Skipper',
+      crew: 'Crew',
+      team: 'Team',
+      judge: 'Judge',
+      helper: 'Helper',
+      admin: 'Admin',
+    };
+    return roles.map(r => roleLabels[r] || r).join(', ');
+  };
+
+  const renderEvent = ({ item }: { item: TrackingEvent }) => (
     <TouchableOpacity
       style={styles.eventCard}
       onPress={() => handleSelectEvent(item)}
@@ -80,9 +104,11 @@ export default function EventSelectScreen({ navigation }: Props) {
         <Text style={styles.eventName} numberOfLines={2}>
           {item.name}
         </Text>
-        <View style={styles.statusBadge}>
-          <Text style={styles.statusText}>{item.status}</Text>
-        </View>
+        {item.roles && item.roles.length > 0 && (
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleText}>{formatRoles(item.roles)}</Text>
+          </View>
+        )}
       </View>
 
       {item.boatClass && (
@@ -127,9 +153,9 @@ export default function EventSelectScreen({ navigation }: Props) {
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Select Event</Text>
+        <Text style={styles.headerTitle}>My Events</Text>
         <Text style={styles.headerSubtitle}>
-          Choose a race to track, or start free sailing
+          Events you are registered for, or start free sailing
         </Text>
       </View>
 
@@ -150,21 +176,23 @@ export default function EventSelectScreen({ navigation }: Props) {
       </TouchableOpacity>
 
       {/* Search */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search events..."
-          placeholderTextColor="#64748b"
-          value={search}
-          onChangeText={setSearch}
-        />
-      </View>
+      {events.length > 3 && (
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search events..."
+            placeholderTextColor="#64748b"
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
+      )}
 
       {/* Events List */}
       {eventsQuery.isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#e85d2a" />
-          <Text style={styles.loadingText}>Loading events...</Text>
+          <Text style={styles.loadingText}>Loading your events...</Text>
         </View>
       ) : eventsQuery.error ? (
         <View style={styles.errorContainer}>
@@ -191,8 +219,14 @@ export default function EventSelectScreen({ navigation }: Props) {
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>
-                {search ? 'No events match your search' : 'No active events'}
+              <Text style={styles.emptyIcon}>⛵</Text>
+              <Text style={styles.emptyTitle}>
+                {search ? 'No events match your search' : 'No registered events'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {search
+                  ? 'Try a different search term'
+                  : 'Register for an event on sailracemanager.com to see it here. You can always use Free Sailing above.'}
               </Text>
             </View>
           }
@@ -294,15 +328,17 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
-  statusBadge: {
-    backgroundColor: '#1a4d2e',
+  roleBadge: {
+    backgroundColor: '#1a3d5c',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e85d2a40',
   },
-  statusText: {
-    fontSize: 11,
-    color: '#4ade80',
+  roleText: {
+    fontSize: 10,
+    color: '#e85d2a',
     fontWeight: '600',
     textTransform: 'uppercase',
   },
@@ -365,9 +401,23 @@ const styles = StyleSheet.create({
   emptyContainer: {
     paddingVertical: 40,
     alignItems: 'center',
+    paddingHorizontal: 20,
   },
-  emptyText: {
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    color: '#94a3b8',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
     color: '#64748b',
-    fontSize: 15,
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });
