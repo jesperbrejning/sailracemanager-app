@@ -28,7 +28,7 @@ import { getSessionCookie } from './auth';
  * - tracking.stop (mutation) - stop tracking session
  * - tracking.getActive (query) - get active session
  * - tracking.myHistory (query) - get tracking history
- * - events.list (query) - list available events
+ * - event.list (query) - list available events
  */
 type AppRouter = any;
 

@@ -31,8 +31,9 @@ export default function EventSelectScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
 
   // Fetch events from backend
-  const eventsQuery = trpc.events.list.useQuery(
-    { status: 'active', limit: 50 },
+  // Server endpoint is event.list (singular) with no input params
+  const eventsQuery = trpc.event.list.useQuery(
+    undefined,
     { retry: 1 }
   );
 
