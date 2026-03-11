@@ -3,7 +3,7 @@
  * 
  * Manages authentication state for the native app.
  * Uses SecureStore to persist the session cookie obtained
- * via the OAuth WebView login flow.
+ * via email/password or Google login.
  */
 
 import * as SecureStore from 'expo-secure-store';
@@ -62,26 +62,6 @@ export async function isAuthenticated(): Promise<boolean> {
 export async function logout(): Promise<void> {
   await clearSessionCookie();
   await clearCachedUser();
-}
-
-/**
- * Build the OAuth login URL for WebView.
- * 
- * The flow is:
- * 1. Open WebView to Manus OAuth portal
- * 2. User logs in
- * 3. OAuth redirects to /api/oauth/callback on our backend
- * 4. Backend sets the session cookie
- * 5. We intercept the cookie from the WebView response
- */
-export function buildLoginUrl(redirectUri: string): string {
-  const state = btoa(redirectUri);
-  const url = new URL(`${CONFIG.OAUTH_PORTAL_URL}/app-auth`);
-  url.searchParams.set('appId', CONFIG.APP_ID);
-  url.searchParams.set('redirectUri', redirectUri);
-  url.searchParams.set('state', state);
-  url.searchParams.set('type', 'signIn');
-  return url.toString();
 }
 
 /**

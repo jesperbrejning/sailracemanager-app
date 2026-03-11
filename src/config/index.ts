@@ -10,10 +10,9 @@ export const CONFIG = {
   API_BASE_URL: 'https://sailracemanager.com',
   TRPC_ENDPOINT: '/api/trpc',
 
-  // OAuth
-  OAUTH_PORTAL_URL: 'https://auth.manus.im',
-  OAUTH_CALLBACK_PATH: '/api/oauth/callback',
-  APP_ID: '', // Will be set from env or at build time
+  // Auth - email/password + Google login
+  // Google Client ID is optional - set it to enable Google Sign-In
+  GOOGLE_CLIENT_ID: '',  // Set your Google Client ID here if needed
 
   // GPS Tracking
   GPS: {
@@ -44,7 +43,7 @@ export const CONFIG = {
     TRACKING_HISTORY: 'tracking_history',
   },
 
-  // Cookie name (must match backend)
+  // Cookie name (must match backend - from shared/const.ts)
   COOKIE_NAME: 'app_session_id',
 } as const;
 
