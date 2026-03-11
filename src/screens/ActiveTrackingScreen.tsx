@@ -2,7 +2,7 @@
  * Active Tracking Screen
  * 
  * The main tracking interface showing:
- * - Live map with GPS trail
+ * - Live map with GPS trail (WebView + Leaflet/OpenStreetMap)
  * - Speed gauge (knots)
  * - Distance traveled
  * - Duration timer
@@ -13,7 +13,7 @@
  * background GPS via expo-location TaskManager.
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -22,57 +22,12 @@ import {
   Alert,
   SafeAreaView,
   StatusBar,
-  Dimensions,
-  ScrollView,
 } from 'react-native';
 import { useTracking } from '../hooks/useTracking';
 import { formatDuration, formatSpeed, formatDistance } from '../utils/geo';
+import WebViewMap from '../components/WebViewMap';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
-
-const { width, height } = Dimensions.get('window');
-
-// Lazy-load MapView to prevent crash if react-native-maps has issues
-let MapViewComponent: any = null;
-let MarkerComponent: any = null;
-let PolylineComponent: any = null;
-
-try {
-  const maps = require('react-native-maps');
-  MapViewComponent = maps.default;
-  MarkerComponent = maps.Marker;
-  PolylineComponent = maps.Polyline;
-} catch (e) {
-  console.warn('[ActiveTracking] react-native-maps not available:', e);
-}
-
-/**
- * Error boundary to catch MapView crashes gracefully
- */
-class MapErrorBoundary extends Component<
-  { children: React.ReactNode; fallback: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error) {
-    console.warn('[MapErrorBoundary] Map crashed:', error.message);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
-    return this.props.children;
-  }
-}
 
 type Props = {
   navigation: NativeStackNavigationProp<any>;
@@ -103,34 +58,13 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
     recoverSession,
   } = useTracking();
 
-  const mapRef = useRef<any>(null);
   const [showStats, setShowStats] = useState(false);
   const [finalStats, setFinalStats] = useState<any>(null);
-  const [mapAvailable, setMapAvailable] = useState(!!MapViewComponent);
 
   // Try to recover an existing session on mount
-  useEffect(() => {
+  React.useEffect(() => {
     recoverSession();
   }, []);
-
-  // Center map on current position
-  useEffect(() => {
-    if (currentPosition && mapRef.current && mapAvailable) {
-      try {
-        mapRef.current.animateToRegion(
-          {
-            latitude: currentPosition.latitude,
-            longitude: currentPosition.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          },
-          500
-        );
-      } catch (e) {
-        // Ignore map animation errors
-      }
-    }
-  }, [currentPosition?.latitude, currentPosition?.longitude, mapAvailable]);
 
   // Build polyline coordinates from track points
   const polylineCoords = useMemo(
@@ -183,33 +117,6 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
           ? '#ef4444'
           : '#64748b';
 
-  // Default map region (Denmark)
-  const defaultRegion = {
-    latitude: 55.6761,
-    longitude: 12.5683,
-    latitudeDelta: 0.05,
-    longitudeDelta: 0.05,
-  };
-
-  /** Fallback UI when map is not available */
-  const MapFallback = () => (
-    <View style={styles.mapFallback}>
-      <Text style={styles.mapFallbackIcon}>🗺️</Text>
-      <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
-      <Text style={styles.mapFallbackText}>
-        GPS tracking is still working.{'\n'}
-        Your route is being recorded.
-      </Text>
-      {currentPosition && (
-        <View style={styles.coordsBox}>
-          <Text style={styles.coordsText}>
-            📍 {currentPosition.latitude.toFixed(5)}, {currentPosition.longitude.toFixed(5)}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0a1628" />
@@ -253,91 +160,14 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
         <View style={styles.headerRight} />
       </View>
 
-      {/* Map */}
+      {/* Map - WebView with Leaflet/OpenStreetMap */}
       <View style={styles.mapContainer}>
-        {mapAvailable && MapViewComponent ? (
-          <MapErrorBoundary fallback={<MapFallback />}>
-            <MapViewComponent
-              ref={mapRef}
-              style={styles.map}
-              initialRegion={
-                currentPosition
-                  ? {
-                      latitude: currentPosition.latitude,
-                      longitude: currentPosition.longitude,
-                      latitudeDelta: 0.01,
-                      longitudeDelta: 0.01,
-                    }
-                  : defaultRegion
-              }
-              mapType="standard"
-              showsUserLocation={false}
-              showsMyLocationButton={false}
-            >
-              {/* Track polyline */}
-              {PolylineComponent && polylineCoords.length > 1 && (
-                <PolylineComponent
-                  coordinates={polylineCoords}
-                  strokeColor="#e85d2a"
-                  strokeWidth={3}
-                />
-              )}
-
-              {/* Current position marker */}
-              {MarkerComponent && currentPosition && (
-                <MarkerComponent
-                  coordinate={{
-                    latitude: currentPosition.latitude,
-                    longitude: currentPosition.longitude,
-                  }}
-                  title="Current Position"
-                >
-                  <View style={styles.markerContainer}>
-                    <View style={styles.markerDot} />
-                    {accuracy && accuracy < 100 && (
-                      <View
-                        style={[
-                          styles.accuracyCircle,
-                          {
-                            width: Math.max(20, Math.min(accuracy / 2, 80)),
-                            height: Math.max(20, Math.min(accuracy / 2, 80)),
-                            borderRadius: Math.max(10, Math.min(accuracy / 4, 40)),
-                          },
-                        ]}
-                      />
-                    )}
-                  </View>
-                </MarkerComponent>
-              )}
-            </MapViewComponent>
-
-            {/* Map overlay - center on position button */}
-            {currentPosition && (
-              <TouchableOpacity
-                style={styles.centerButton}
-                onPress={() => {
-                  try {
-                    mapRef.current?.animateToRegion(
-                      {
-                        latitude: currentPosition.latitude,
-                        longitude: currentPosition.longitude,
-                        latitudeDelta: 0.01,
-                        longitudeDelta: 0.01,
-                      },
-                      500
-                    );
-                  } catch (e) {
-                    // Ignore
-                  }
-                }}
-              >
-                <Text style={styles.centerButtonText}>◎</Text>
-              </TouchableOpacity>
-            )}
-          </MapErrorBoundary>
-        ) : (
-          <MapFallback />
-        )}
+        <WebViewMap
+          currentPosition={currentPosition}
+          accuracy={accuracy}
+          trackPoints={polylineCoords}
+          style={styles.map}
+        />
       </View>
 
       {/* Stats Dashboard */}
@@ -506,7 +336,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    marginRight: 6,
+    marginRight: 4,
   },
   gpsText: {
     fontSize: 11,
@@ -515,110 +345,23 @@ const styles = StyleSheet.create({
   headerRight: {
     width: 40,
   },
-
-  // Map
   mapContainer: {
-    flex: 1,
-    position: 'relative',
+    height: '40%',
+    backgroundColor: '#0f1f38',
   },
   map: {
     flex: 1,
   },
-  mapFallback: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0f1f38',
-    padding: 24,
-  },
-  mapFallbackIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  mapFallbackTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#ffffff',
-    marginBottom: 8,
-  },
-  mapFallbackText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  coordsBox: {
-    marginTop: 16,
-    backgroundColor: '#162d4d',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#1e3d66',
-  },
-  coordsText: {
-    fontSize: 13,
-    color: '#e0f2fe',
-    fontVariant: ['tabular-nums'],
-  },
-  centerButton: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#162d4d',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1e3d66',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-  },
-  centerButtonText: {
-    fontSize: 22,
-    color: '#e85d2a',
-  },
-  markerContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  markerDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#e85d2a',
-    borderWidth: 2,
-    borderColor: '#ffffff',
-    zIndex: 2,
-  },
-  accuracyCircle: {
-    position: 'absolute',
-    backgroundColor: 'rgba(232, 93, 42, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(232, 93, 42, 0.3)',
-  },
-
-  // Dashboard
   dashboard: {
-    backgroundColor: '#0f1f38',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    flex: 1,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 24,
-    borderTopWidth: 1,
-    borderColor: '#1e3d66',
   },
   statRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   statPrimary: {
     flexDirection: 'row',
@@ -632,21 +375,21 @@ const styles = StyleSheet.create({
   },
   statUnit: {
     fontSize: 20,
-    color: '#94a3b8',
+    color: '#e85d2a',
     marginLeft: 4,
+    fontWeight: '600',
   },
   statSecondary: {
-    marginLeft: 8,
+    marginLeft: 12,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748b',
     fontWeight: '600',
     letterSpacing: 1,
   },
   statGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#162d4d',
     borderRadius: 12,
     paddingVertical: 12,
@@ -663,7 +406,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   statCellLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#64748b',
     fontWeight: '600',
     letterSpacing: 0.5,
@@ -676,9 +419,9 @@ const styles = StyleSheet.create({
   },
   pointsRow: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   pointsText: {
     fontSize: 12,
@@ -687,35 +430,27 @@ const styles = StyleSheet.create({
   pendingText: {
     fontSize: 12,
     color: '#facc15',
-    marginLeft: 8,
   },
   errorBanner: {
-    backgroundColor: '#3b1a1a',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    backgroundColor: '#7f1d1d',
     borderRadius: 8,
-    marginBottom: 12,
+    padding: 10,
+    marginBottom: 8,
   },
   errorBannerText: {
     color: '#fca5a5',
-    fontSize: 12,
+    fontSize: 13,
     textAlign: 'center',
   },
   controlRow: {
-    alignItems: 'center',
+    marginTop: 'auto',
+    paddingBottom: 20,
   },
   startButton: {
     backgroundColor: '#e85d2a',
+    borderRadius: 12,
     paddingVertical: 16,
-    paddingHorizontal: 48,
-    borderRadius: 30,
-    width: '100%',
     alignItems: 'center',
-    shadowColor: '#e85d2a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
   startButtonText: {
     color: '#ffffff',
@@ -723,38 +458,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   stopButton: {
-    backgroundColor: '#dc2626',
+    backgroundColor: '#7f1d1d',
+    borderRadius: 12,
     paddingVertical: 16,
-    paddingHorizontal: 48,
-    borderRadius: 30,
-    width: '100%',
     alignItems: 'center',
-    shadowColor: '#dc2626',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    borderWidth: 2,
+    borderColor: '#ef4444',
   },
   stopButtonText: {
-    color: '#ffffff',
+    color: '#fca5a5',
     fontSize: 18,
     fontWeight: '700',
   },
-
-  // Stats overlay
   statsOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(10, 22, 40, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 20,
   },
   statsModal: {
     backgroundColor: '#162d4d',
-    borderRadius: 20,
+    borderRadius: 16,
     padding: 24,
     width: '100%',
     maxWidth: 360,
+    borderWidth: 1,
+    borderColor: '#1e3d66',
   },
   statsTitle: {
     fontSize: 22,
@@ -771,7 +501,7 @@ const styles = StyleSheet.create({
   statsItem: {
     width: '50%',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
   statsItemValue: {
     fontSize: 20,
@@ -779,26 +509,27 @@ const styles = StyleSheet.create({
     color: '#e85d2a',
   },
   statsItemLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#94a3b8',
-    marginTop: 4,
+    marginTop: 2,
+    fontWeight: '500',
   },
   statsNote: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: '#64748b',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
     lineHeight: 18,
   },
   statsDismissButton: {
     backgroundColor: '#e85d2a',
+    borderRadius: 10,
     paddingVertical: 14,
-    borderRadius: 12,
     alignItems: 'center',
   },
   statsDismissText: {
     color: '#ffffff',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
   },
 });
