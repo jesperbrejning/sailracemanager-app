@@ -29,6 +29,7 @@
         "backgroundColor": "#0a1628"
       },
       "package": "com.sailracemanager.app",
+      "newArchEnabled": false,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

@@ -21,7 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -35,18 +34,23 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Install @trpc/server (peer dependency)
-        run: npm install @trpc/server --legacy-peer-deps
-
       - name: Run Expo prebuild
         run: npx expo prebuild --platform android --clean
 
-      - name: Add hermesEnabled to gradle.properties
+      - name: Ensure gradle properties are set
         run: |
-          echo "" >> android/gradle.properties
-          echo "hermesEnabled=true" >> android/gradle.properties
-          echo "newArchEnabled=false" >> android/gradle.properties
-          echo "reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64" >> android/gradle.properties
+          cat >> android/gradle.properties << 'EOF'
+
+          hermesEnabled=true
+          newArchEnabled=false
+          reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64
+          EOF
+
+      - name: Remove codegen-generated ViewManager interfaces (Old Arch fix)
+        run: |
+          # Remove any codegen-generated files that reference NewArch-only classes
+          find android -path "*/com/facebook/react/viewmanagers/*" -name "*.java" -delete 2>/dev/null || true
+          echo "Cleaned codegen viewmanager interfaces"
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
@@ -54,12 +58,6 @@ jobs:
       - name: Build Release APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
-
-      - name: Sign APK (debug signing for testing)
-        run: |
-          # The unsigned APK is already usable for testing
-          # For production, set up proper signing with a keystore
-          echo "APK built successfully"
 
       - name: Find APK
         id: find_apk
