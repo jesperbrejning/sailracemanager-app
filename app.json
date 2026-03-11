@@ -38,7 +38,12 @@
         "FOREGROUND_SERVICE_LOCATION",
         "WAKE_LOCK",
         "POST_NOTIFICATIONS"
-      ]
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": ""
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -53,7 +58,13 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "react-native-maps",
+        {
+          "googleMapsApiKey": ""
+        }
+      ]
     ],
     "extra": {
       "eas": {

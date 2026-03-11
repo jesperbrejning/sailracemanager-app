@@ -13,7 +13,7 @@
  * background GPS via expo-location TaskManager.
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import {
   View,
   Text,
@@ -25,13 +25,54 @@ import {
   Dimensions,
   ScrollView,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useTracking } from '../hooks/useTracking';
 import { formatDuration, formatSpeed, formatDistance } from '../utils/geo';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
+
+// Lazy-load MapView to prevent crash if react-native-maps has issues
+let MapViewComponent: any = null;
+let MarkerComponent: any = null;
+let PolylineComponent: any = null;
+
+try {
+  const maps = require('react-native-maps');
+  MapViewComponent = maps.default;
+  MarkerComponent = maps.Marker;
+  PolylineComponent = maps.Polyline;
+} catch (e) {
+  console.warn('[ActiveTracking] react-native-maps not available:', e);
+}
+
+/**
+ * Error boundary to catch MapView crashes gracefully
+ */
+class MapErrorBoundary extends Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn('[MapErrorBoundary] Map crashed:', error.message);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
 
 type Props = {
   navigation: NativeStackNavigationProp<any>;
@@ -62,9 +103,10 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
     recoverSession,
   } = useTracking();
 
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<any>(null);
   const [showStats, setShowStats] = useState(false);
   const [finalStats, setFinalStats] = useState<any>(null);
+  const [mapAvailable, setMapAvailable] = useState(!!MapViewComponent);
 
   // Try to recover an existing session on mount
   useEffect(() => {
@@ -73,18 +115,22 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
 
   // Center map on current position
   useEffect(() => {
-    if (currentPosition && mapRef.current) {
-      mapRef.current.animateToRegion(
-        {
-          latitude: currentPosition.latitude,
-          longitude: currentPosition.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        },
-        500
-      );
+    if (currentPosition && mapRef.current && mapAvailable) {
+      try {
+        mapRef.current.animateToRegion(
+          {
+            latitude: currentPosition.latitude,
+            longitude: currentPosition.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          },
+          500
+        );
+      } catch (e) {
+        // Ignore map animation errors
+      }
     }
-  }, [currentPosition?.latitude, currentPosition?.longitude]);
+  }, [currentPosition?.latitude, currentPosition?.longitude, mapAvailable]);
 
   // Build polyline coordinates from track points
   const polylineCoords = useMemo(
@@ -145,6 +191,25 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
     longitudeDelta: 0.05,
   };
 
+  /** Fallback UI when map is not available */
+  const MapFallback = () => (
+    <View style={styles.mapFallback}>
+      <Text style={styles.mapFallbackIcon}>🗺️</Text>
+      <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
+      <Text style={styles.mapFallbackText}>
+        GPS tracking is still working.{'\n'}
+        Your route is being recorded.
+      </Text>
+      {currentPosition && (
+        <View style={styles.coordsBox}>
+          <Text style={styles.coordsText}>
+            📍 {currentPosition.latitude.toFixed(5)}, {currentPosition.longitude.toFixed(5)}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0a1628" />
@@ -190,78 +255,88 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
 
       {/* Map */}
       <View style={styles.mapContainer}>
-        <MapView
-          ref={mapRef}
-          style={styles.map}
-          initialRegion={
-            currentPosition
-              ? {
-                  latitude: currentPosition.latitude,
-                  longitude: currentPosition.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                }
-              : defaultRegion
-          }
-          mapType="standard"
-          showsUserLocation={false}
-          showsMyLocationButton={false}
-        >
-          {/* Track polyline */}
-          {polylineCoords.length > 1 && (
-            <Polyline
-              coordinates={polylineCoords}
-              strokeColor="#e85d2a"
-              strokeWidth={3}
-            />
-          )}
-
-          {/* Current position marker */}
-          {currentPosition && (
-            <Marker
-              coordinate={{
-                latitude: currentPosition.latitude,
-                longitude: currentPosition.longitude,
-              }}
-              title="Current Position"
+        {mapAvailable && MapViewComponent ? (
+          <MapErrorBoundary fallback={<MapFallback />}>
+            <MapViewComponent
+              ref={mapRef}
+              style={styles.map}
+              initialRegion={
+                currentPosition
+                  ? {
+                      latitude: currentPosition.latitude,
+                      longitude: currentPosition.longitude,
+                      latitudeDelta: 0.01,
+                      longitudeDelta: 0.01,
+                    }
+                  : defaultRegion
+              }
+              mapType="standard"
+              showsUserLocation={false}
+              showsMyLocationButton={false}
             >
-              <View style={styles.markerContainer}>
-                <View style={styles.markerDot} />
-                {accuracy && accuracy < 100 && (
-                  <View
-                    style={[
-                      styles.accuracyCircle,
-                      {
-                        width: Math.max(20, Math.min(accuracy / 2, 80)),
-                        height: Math.max(20, Math.min(accuracy / 2, 80)),
-                        borderRadius: Math.max(10, Math.min(accuracy / 4, 40)),
-                      },
-                    ]}
-                  />
-                )}
-              </View>
-            </Marker>
-          )}
-        </MapView>
+              {/* Track polyline */}
+              {PolylineComponent && polylineCoords.length > 1 && (
+                <PolylineComponent
+                  coordinates={polylineCoords}
+                  strokeColor="#e85d2a"
+                  strokeWidth={3}
+                />
+              )}
 
-        {/* Map overlay - center on position button */}
-        {currentPosition && (
-          <TouchableOpacity
-            style={styles.centerButton}
-            onPress={() => {
-              mapRef.current?.animateToRegion(
-                {
-                  latitude: currentPosition.latitude,
-                  longitude: currentPosition.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                },
-                500
-              );
-            }}
-          >
-            <Text style={styles.centerButtonText}>◎</Text>
-          </TouchableOpacity>
+              {/* Current position marker */}
+              {MarkerComponent && currentPosition && (
+                <MarkerComponent
+                  coordinate={{
+                    latitude: currentPosition.latitude,
+                    longitude: currentPosition.longitude,
+                  }}
+                  title="Current Position"
+                >
+                  <View style={styles.markerContainer}>
+                    <View style={styles.markerDot} />
+                    {accuracy && accuracy < 100 && (
+                      <View
+                        style={[
+                          styles.accuracyCircle,
+                          {
+                            width: Math.max(20, Math.min(accuracy / 2, 80)),
+                            height: Math.max(20, Math.min(accuracy / 2, 80)),
+                            borderRadius: Math.max(10, Math.min(accuracy / 4, 40)),
+                          },
+                        ]}
+                      />
+                    )}
+                  </View>
+                </MarkerComponent>
+              )}
+            </MapViewComponent>
+
+            {/* Map overlay - center on position button */}
+            {currentPosition && (
+              <TouchableOpacity
+                style={styles.centerButton}
+                onPress={() => {
+                  try {
+                    mapRef.current?.animateToRegion(
+                      {
+                        latitude: currentPosition.latitude,
+                        longitude: currentPosition.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                      },
+                      500
+                    );
+                  } catch (e) {
+                    // Ignore
+                  }
+                }}
+              >
+                <Text style={styles.centerButtonText}>◎</Text>
+              </TouchableOpacity>
+            )}
+          </MapErrorBoundary>
+        ) : (
+          <MapFallback />
         )}
       </View>
 
@@ -337,7 +412,7 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
               onPress={handleStop}
               activeOpacity={0.7}
             >
-              <Text style={styles.stopButtonText}>■ Stop Tracking</Text>
+              <Text style={styles.stopButtonText}>⬛ Stop Tracking</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -349,7 +424,7 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
           <View style={styles.statsModal}>
             <Text style={styles.statsTitle}>Session Complete 🏁</Text>
 
-            <View style={styles.statsGrid}>
+            <View style={styles.statsGrid2}>
               <View style={styles.statsItem}>
                 <Text style={styles.statsItemValue}>
                   {finalStats.totalPoints}
@@ -448,6 +523,43 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0f1f38',
+    padding: 24,
+  },
+  mapFallbackIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  mapFallbackTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  mapFallbackText: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  coordsBox: {
+    marginTop: 16,
+    backgroundColor: '#162d4d',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1e3d66',
+  },
+  coordsText: {
+    fontSize: 13,
+    color: '#e0f2fe',
+    fontVariant: ['tabular-nums'],
   },
   centerButton: {
     position: 'absolute',
@@ -651,7 +763,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
-  statsGrid: {
+  statsGrid2: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 16,
