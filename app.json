@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "sailracemanager-app",
+    "name": "SailRaceManager",
     "slug": "sailracemanager-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,22 +9,55 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0a1628"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sailracemanager.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SailRaceManager needs your location to track your sailing route during races.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "SailRaceManager needs background location access to keep tracking your sailing route even when the screen is off.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a1628"
       },
-      "predictiveBackGestureEnabled": false
+      "package": "com.sailracemanager.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "SailRaceManager needs background location access to track your sailing route even when the screen is off.",
+          "locationWhenInUsePermission": "SailRaceManager needs your location to track your sailing route during races.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
     }
   }
 }

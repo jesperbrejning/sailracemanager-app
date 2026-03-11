@@ -1,5 +1,15 @@
-import { registerRootComponent } from 'expo';
+/**
+ * Entry point for the SailRaceManager app.
+ * 
+ * IMPORTANT: The background tracking import MUST come before
+ * registerRootComponent to ensure the TaskManager task is
+ * registered before any component renders.
+ */
 
+// Register background GPS tracking task first
+import './src/services/backgroundTracking';
+
+import { registerRootComponent } from 'expo';
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
