@@ -216,13 +216,14 @@ export function useTracking() {
         }
 
         if (!permissions.background) {
+          // Background location denied - the backgroundTracking service
+          // already showed an alert with "Open Settings" option.
+          // Continue with foreground-only tracking.
           setState((prev) => ({
             ...prev,
-            error:
-              'Background location denied. Tracking will stop when app is minimized. Please enable "Allow all the time" in Settings.',
+            error: null, // Don't show error banner - alert was already shown
             gpsStatus: 'acquiring',
           }));
-          // Continue anyway - foreground tracking still works
         }
 
         // Create session on backend

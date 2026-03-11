@@ -7,15 +7,16 @@
  * On Android, this creates a Foreground Service with a persistent
  * notification, which is required by Android to keep GPS active.
  * 
- * Architecture:
- * 1. TaskManager defines a background task that receives location updates
- * 2. Location updates are buffered in memory and AsyncStorage
- * 3. A periodic flush sends batched points to the backend
- * 4. If offline, points are queued in AsyncStorage for later sync
+ * Permission Flow (Android 11+):
+ * 1. Request foreground location first
+ * 2. If granted, request background location separately
+ * 3. If background denied, show alert with "Open Settings" option
+ * 4. Tracking can still work in foreground-only mode
  */
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import { Alert, Linking, Platform } from 'react-native';
 import { CONFIG } from '../config';
 import { addPendingBatch } from './offlineStorage';
 import type { TrackingPoint } from '../types/tracking';
@@ -106,22 +107,81 @@ async function flushBuffer(): Promise<void> {
 }
 
 /**
- * Request location permissions (foreground + background).
- * Must be called before starting tracking.
+ * Show an alert guiding the user to enable background location in Settings.
+ */
+function showBackgroundLocationSettingsAlert(): void {
+  Alert.alert(
+    'Background Location Required',
+    'To track your sailing route when the screen is off or the app is in the background, you need to enable "Allow all the time" for location access.\n\nGo to Settings → Location → Allow all the time',
+    [
+      {
+        text: 'Open Settings',
+        onPress: () => {
+          if (Platform.OS === 'android') {
+            Linking.openSettings();
+          } else {
+            Linking.openURL('app-settings:');
+          }
+        },
+      },
+      {
+        text: 'Continue without background',
+        style: 'cancel',
+      },
+    ]
+  );
+}
+
+/**
+ * Request location permissions with proper step-by-step flow for Android 11+.
+ * 
+ * On Android 11+, background location MUST be requested separately after
+ * foreground location is granted. The system may not show a dialog and instead
+ * require the user to go to Settings manually.
+ * 
+ * Returns the permission status and whether the user should be guided to Settings.
  */
 export async function requestLocationPermissions(): Promise<{
   foreground: boolean;
   background: boolean;
 }> {
-  const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
-  if (fgStatus !== 'granted') {
-    return { foreground: false, background: false };
+  // Step 1: Check if we already have permissions
+  const existingFg = await Location.getForegroundPermissionsAsync();
+  const existingBg = await Location.getBackgroundPermissionsAsync();
+  
+  if (existingFg.status === 'granted' && existingBg.status === 'granted') {
+    return { foreground: true, background: true };
   }
 
-  const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+  // Step 2: Request foreground location first
+  if (existingFg.status !== 'granted') {
+    const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+    if (fgStatus !== 'granted') {
+      return { foreground: false, background: false };
+    }
+  }
+
+  // Step 3: Request background location (separate step on Android 11+)
+  if (existingBg.status !== 'granted') {
+    const { status: bgStatus, canAskAgain } = await Location.requestBackgroundPermissionsAsync();
+    
+    if (bgStatus === 'granted') {
+      return { foreground: true, background: true };
+    }
+
+    // On Android 12+, the system often doesn't show a dialog for background location.
+    // Instead, it returns 'denied' immediately and the user must go to Settings.
+    if (Platform.OS === 'android') {
+      // Show a helpful alert guiding the user to Settings
+      showBackgroundLocationSettingsAlert();
+    }
+
+    return { foreground: true, background: false };
+  }
+
   return {
-    foreground: true,
-    background: bgStatus === 'granted',
+    foreground: existingFg.status === 'granted',
+    background: existingBg.status === 'granted',
   };
 }
 
@@ -143,6 +203,9 @@ export async function checkLocationPermissions(): Promise<{
 /**
  * Start background GPS tracking.
  * 
+ * If background permission is not granted, falls back to foreground-only
+ * tracking using watchPositionAsync instead of startLocationUpdatesAsync.
+ * 
  * @param sessionId - The tracking session ID from the backend
  * @param onSendPoints - Callback to send points to the backend
  * @param onUpdate - Callback for each new location update (foreground UI)
@@ -159,30 +222,75 @@ export async function startBackgroundTracking(
   sendPointsCallback = onSendPoints;
   onLocationUpdateCallback = onUpdate ?? null;
 
-  // Check if already tracking
-  const isTracking = await Location.hasStartedLocationUpdatesAsync(TASK_NAME);
-  if (isTracking) {
-    await Location.stopLocationUpdatesAsync(TASK_NAME);
-  }
+  // Check current permissions
+  const perms = await checkLocationPermissions();
 
-  // Start background location updates
-  await Location.startLocationUpdatesAsync(TASK_NAME, {
-    accuracy: Location.Accuracy.BestForNavigation,
-    timeInterval: CONFIG.GPS.MIN_UPDATE_INTERVAL_MS,
-    distanceInterval: 0, // Get updates even when stationary
-    deferredUpdatesInterval: 0,
-    deferredUpdatesDistance: 0,
-    showsBackgroundLocationIndicator: true, // iOS
-    foregroundService: {
-      notificationTitle: CONFIG.GPS.NOTIFICATION_TITLE,
-      notificationBody: CONFIG.GPS.NOTIFICATION_BODY,
-      notificationColor: '#e85d2a',
-      killServiceOnDestroy: false,
-    },
-    // Android: Keep tracking even when app is killed
-    pausesUpdatesAutomatically: false,
-    activityType: Location.ActivityType.OtherNavigation,
-  });
+  if (perms.background) {
+    // Full background tracking via TaskManager
+    // Check if already tracking
+    const isTracking = await Location.hasStartedLocationUpdatesAsync(TASK_NAME);
+    if (isTracking) {
+      await Location.stopLocationUpdatesAsync(TASK_NAME);
+    }
+
+    // Start background location updates
+    await Location.startLocationUpdatesAsync(TASK_NAME, {
+      accuracy: Location.Accuracy.BestForNavigation,
+      timeInterval: CONFIG.GPS.MIN_UPDATE_INTERVAL_MS,
+      distanceInterval: 0, // Get updates even when stationary
+      deferredUpdatesInterval: 0,
+      deferredUpdatesDistance: 0,
+      showsBackgroundLocationIndicator: true, // iOS
+      foregroundService: {
+        notificationTitle: CONFIG.GPS.NOTIFICATION_TITLE,
+        notificationBody: CONFIG.GPS.NOTIFICATION_BODY,
+        notificationColor: '#e85d2a',
+        killServiceOnDestroy: false,
+      },
+      // Android: Keep tracking even when app is killed
+      pausesUpdatesAutomatically: false,
+      activityType: Location.ActivityType.OtherNavigation,
+    });
+  } else if (perms.foreground) {
+    // Foreground-only fallback using watchPositionAsync
+    console.log('[BackgroundTracking] Background denied, using foreground-only tracking');
+    
+    await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: CONFIG.GPS.MIN_UPDATE_INTERVAL_MS,
+        distanceInterval: 0,
+      },
+      (location) => {
+        const point: TrackingPoint = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          accuracy: location.coords.accuracy ?? undefined,
+          altitude: location.coords.altitude ?? undefined,
+          altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
+          speed: location.coords.speed ?? undefined,
+          heading: location.coords.heading ?? undefined,
+          timestamp: location.timestamp,
+        };
+
+        if (Math.abs(point.timestamp - lastTimestamp) < 100) return;
+        lastTimestamp = point.timestamp;
+
+        pointBuffer.push(point);
+
+        if (onLocationUpdateCallback) {
+          onLocationUpdateCallback(point);
+        }
+
+        // Auto-flush when buffer is large enough
+        if (pointBuffer.length >= 10 && activeSessionId) {
+          flushBuffer().catch(() => {});
+        }
+      }
+    );
+  } else {
+    throw new Error('Location permission not granted');
+  }
 }
 
 /**
