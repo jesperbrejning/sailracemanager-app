@@ -3,12 +3,14 @@
  * 
  * Main tracking hook for the native app. Orchestrates:
  * - Background GPS tracking via expo-location
+ * - Heel angle correction via DeviceMotion sensors
  * - Point batching and sending via tRPC
  * - Offline storage and sync
  * - UI state management
  * 
  * This is the React Native equivalent of the web's useGpsTracking hook,
- * but with proper background support via Android Foreground Service.
+ * but with proper background support via Android Foreground Service
+ * and heel correction via gyroscope/accelerometer sensor fusion.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -25,6 +27,15 @@ import {
   updateLocationCallback,
   getTotalCollected,
 } from '../services/backgroundTracking';
+import {
+  startHeelSensor,
+  stopHeelSensor,
+  getHeelAngle,
+  getPitchAngle,
+  isHeelSensorActive,
+  onAppBackground,
+  onAppForeground,
+} from '../services/heelCorrection';
 import {
   saveActiveSession,
   clearActiveSession,
@@ -50,6 +61,9 @@ export function useTracking() {
     error: null,
     gpsStatus: 'idle',
     duration: 0,
+    heelAngle: 0,
+    pitchAngle: 0,
+    heelCorrectionActive: false,
   });
 
   const [trackPoints, setTrackPoints] = useState<TrackingPoint[]>([]);
@@ -63,6 +77,7 @@ export function useTracking() {
   const sentCountRef = useRef<number>(0);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const heelUpdateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const allPointsRef = useRef<TrackingPoint[]>([]);
   const isTrackingRef = useRef<boolean>(false);
 
@@ -89,6 +104,7 @@ export function useTracking() {
   /**
    * Handle a new location update from the background service.
    * Updates UI state (position, speed, distance).
+   * Now includes heel angle data from the heel correction service.
    */
   const handleLocationUpdate = useCallback((point: TrackingPoint) => {
     if (!isTrackingRef.current) return;
@@ -148,6 +164,9 @@ export function useTracking() {
       pointsCollected: getTotalCollected(), // Use global counter (foreground + background)
       distanceMeters: Math.round(totalDistanceRef.current),
       error: null,
+      // Update heel data from the point (which was corrected in backgroundTracking)
+      heelAngle: point.heelAngle ?? prev.heelAngle,
+      pitchAngle: point.pitchAngle ?? prev.pitchAngle,
     }));
   }, []);
 
@@ -178,6 +197,7 @@ export function useTracking() {
 
   /**
    * Start GPS tracking for a race/event.
+   * Now also starts the heel correction sensor.
    */
   const startTracking = useCallback(
     async (options?: {
@@ -202,6 +222,9 @@ export function useTracking() {
         distanceMeters: 0,
         speedKnots: null,
         duration: 0,
+        heelAngle: 0,
+        pitchAngle: 0,
+        heelCorrectionActive: false,
       }));
 
       try {
@@ -227,8 +250,16 @@ export function useTracking() {
           }));
         }
 
+        // Start heel correction sensor (non-blocking - if it fails, GPS still works)
+        const heelStarted = await startHeelSensor();
+        if (heelStarted) {
+          console.log('[Tracking] Heel correction sensor started');
+        } else {
+          console.warn('[Tracking] Heel correction unavailable - tracking without correction');
+        }
+
         // Create session on backend
-        const deviceInfo = `${Platform.OS} ${Platform.Version} - SailRaceManager App`;
+        const deviceInfo = `${Platform.OS} ${Platform.Version} - SailRaceManager App${heelStarted ? ' (heel correction)' : ''}`;
         const { sessionId } = await startMutation.mutateAsync({
           eventId: options?.eventId,
           raceId: options?.raceId,
@@ -273,13 +304,27 @@ export function useTracking() {
           }
         }, 1000);
 
+        // Start heel angle UI update timer (updates heel display at 2Hz)
+        if (heelStarted) {
+          heelUpdateTimerRef.current = setInterval(() => {
+            setState((prev) => ({
+              ...prev,
+              heelAngle: parseFloat(getHeelAngle().toFixed(1)),
+              pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
+              heelCorrectionActive: isHeelSensorActive(),
+            }));
+          }, 500);
+        }
+
         setState((prev) => ({
           ...prev,
           isTracking: true,
           sessionId,
+          heelCorrectionActive: heelStarted,
         }));
       } catch (err) {
         isTrackingRef.current = false;
+        stopHeelSensor(); // Clean up sensor if tracking failed
         const errorMsg =
           err instanceof Error ? err.message : 'Failed to start tracking';
         setState((prev) => ({ ...prev, error: errorMsg, gpsStatus: 'error' }));
@@ -295,6 +340,7 @@ export function useTracking() {
 
   /**
    * Stop GPS tracking and finalize the session.
+   * Also stops the heel correction sensor.
    */
   const stopTracking = useCallback(async () => {
     isTrackingRef.current = false;
@@ -308,6 +354,13 @@ export function useTracking() {
       clearInterval(durationTimerRef.current);
       durationTimerRef.current = null;
     }
+    if (heelUpdateTimerRef.current) {
+      clearInterval(heelUpdateTimerRef.current);
+      heelUpdateTimerRef.current = null;
+    }
+
+    // Stop heel correction sensor
+    stopHeelSensor();
 
     // Stop background tracking (flushes remaining points)
     await stopBackgroundTracking();
@@ -342,6 +395,9 @@ export function useTracking() {
       sessionId: null,
       gpsStatus: 'idle',
       currentPosition: null,
+      heelAngle: 0,
+      pitchAngle: 0,
+      heelCorrectionActive: false,
     }));
 
     return stats;
@@ -366,6 +422,9 @@ export function useTracking() {
       updateSendCallback(sendPointsToServer);
       updateLocationCallback(handleLocationUpdate);
 
+      // Restart heel sensor (it was lost when app was killed)
+      const heelStarted = await startHeelSensor();
+
       // Restart timers
       flushTimerRef.current = setInterval(async () => {
         await forceFlush();
@@ -383,12 +442,25 @@ export function useTracking() {
         }
       }, 1000);
 
+      // Restart heel UI update timer
+      if (heelStarted) {
+        heelUpdateTimerRef.current = setInterval(() => {
+          setState((prev) => ({
+            ...prev,
+            heelAngle: parseFloat(getHeelAngle().toFixed(1)),
+            pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
+            heelCorrectionActive: isHeelSensorActive(),
+          }));
+        }, 500);
+      }
+
       setState((prev) => ({
         ...prev,
         isTracking: true,
         sessionId: saved.sessionId,
         gpsStatus: 'active',
         duration: Math.floor((Date.now() - saved.startedAt) / 1000),
+        heelCorrectionActive: heelStarted,
       }));
 
       return true;
@@ -401,17 +473,21 @@ export function useTracking() {
   }, [sendPointsToServer, handleLocationUpdate, syncPendingBatches]);
 
   // Handle app state changes (foreground/background)
+  // Now also manages heel sensor foreground/background transitions
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && isTrackingRef.current) {
-        // App came to foreground - reconnect callbacks
+        // App came to foreground - reconnect callbacks and resume heel sensor
         updateLocationCallback(handleLocationUpdate);
+        onAppForeground();
         // Sync any pending batches
         syncPendingBatches().catch(() => {});
       } else if (nextState === 'background') {
         // App going to background - clear foreground callback
         // Background task will continue collecting points
+        // Heel sensor will use decay mode
         updateLocationCallback(null);
+        onAppBackground();
       }
     });
 
@@ -423,6 +499,8 @@ export function useTracking() {
     return () => {
       if (flushTimerRef.current) clearInterval(flushTimerRef.current);
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      if (heelUpdateTimerRef.current) clearInterval(heelUpdateTimerRef.current);
+      stopHeelSensor();
     };
   }, []);
 

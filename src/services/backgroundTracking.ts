@@ -19,6 +19,12 @@ import * as TaskManager from 'expo-task-manager';
 import { Alert, Linking, Platform } from 'react-native';
 import { CONFIG } from '../config';
 import { addPendingBatch } from './offlineStorage';
+import {
+  correctPositionForHeel,
+  getHeelAngle,
+  getPitchAngle,
+  filterSpeedForHeel,
+} from './heelCorrection';
 import type { TrackingPoint } from '../types/tracking';
 
 const TASK_NAME = CONFIG.GPS.BACKGROUND_TASK_NAME;
@@ -33,6 +39,7 @@ let lastTimestamp = 0;
 let totalCollectedCount = 0; // Counts ALL points (foreground + background)
 let sendPointsCallback: ((sessionId: number, points: TrackingPoint[]) => Promise<void>) | null = null;
 let onLocationUpdateCallback: ((point: TrackingPoint) => void) | null = null;
+let lastFilteredSpeed = 0; // For heel-corrected speed filtering
 
 /**
  * Define the background location task.
@@ -49,15 +56,31 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
   const { locations } = data as { locations: Location.LocationObject[] };
 
   for (const location of locations) {
+    // Apply heel correction to GPS position
+    const heelCorrected = correctPositionForHeel(
+      location.coords.latitude,
+      location.coords.longitude,
+      location.coords.heading
+    );
+
+    // Apply speed filtering for heel-induced noise
+    const rawSpeed = location.coords.speed ?? undefined;
+    if (rawSpeed != null) {
+      lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
+    }
+
     const point: TrackingPoint = {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
+      latitude: heelCorrected.latitude,
+      longitude: heelCorrected.longitude,
       accuracy: location.coords.accuracy ?? undefined,
       altitude: location.coords.altitude ?? undefined,
       altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
-      speed: location.coords.speed ?? undefined,
+      speed: rawSpeed != null ? lastFilteredSpeed : undefined,
       heading: location.coords.heading ?? undefined,
       timestamp: location.timestamp,
+      heelAngle: parseFloat(getHeelAngle().toFixed(1)),
+      pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
+      heelCorrected: heelCorrected.correctionApplied,
     };
 
     // Skip duplicate timestamps
@@ -222,6 +245,7 @@ export async function startBackgroundTracking(
   activeSessionId = sessionId;
   lastTimestamp = 0;
   totalCollectedCount = 0;
+  lastFilteredSpeed = 0;
   sendPointsCallback = onSendPoints;
   onLocationUpdateCallback = onUpdate ?? null;
 
@@ -265,15 +289,31 @@ export async function startBackgroundTracking(
         distanceInterval: 0,
       },
       (location) => {
+        // Apply heel correction to GPS position
+        const heelCorrected = correctPositionForHeel(
+          location.coords.latitude,
+          location.coords.longitude,
+          location.coords.heading
+        );
+
+        // Apply speed filtering for heel-induced noise
+        const rawSpeed = location.coords.speed ?? undefined;
+        if (rawSpeed != null) {
+          lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
+        }
+
         const point: TrackingPoint = {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
+          latitude: heelCorrected.latitude,
+          longitude: heelCorrected.longitude,
           accuracy: location.coords.accuracy ?? undefined,
           altitude: location.coords.altitude ?? undefined,
           altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
-          speed: location.coords.speed ?? undefined,
+          speed: rawSpeed != null ? lastFilteredSpeed : undefined,
           heading: location.coords.heading ?? undefined,
           timestamp: location.timestamp,
+          heelAngle: parseFloat(getHeelAngle().toFixed(1)),
+          pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
+          heelCorrected: heelCorrected.correctionApplied,
         };
 
         if (Math.abs(point.timestamp - lastTimestamp) < 100) return;

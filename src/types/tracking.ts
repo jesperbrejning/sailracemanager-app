@@ -15,6 +15,12 @@ export interface TrackingPoint {
   speed?: number;
   heading?: number;
   timestamp: number; // Unix ms
+  /** Heel angle in degrees at time of measurement. Positive = starboard, Negative = port. */
+  heelAngle?: number;
+  /** Pitch angle in degrees. Positive = bow up, Negative = bow down. */
+  pitchAngle?: number;
+  /** Whether GPS position was corrected for heel displacement */
+  heelCorrected?: boolean;
 }
 
 /** Input for tracking.start */
@@ -91,6 +97,12 @@ export interface TrackingState {
   error: string | null;
   gpsStatus: 'idle' | 'acquiring' | 'active' | 'error' | 'denied';
   duration: number; // seconds
+  /** Current heel angle in degrees. Positive = starboard, Negative = port. */
+  heelAngle: number;
+  /** Current pitch angle in degrees. Positive = bow up, Negative = bow down. */
+  pitchAngle: number;
+  /** Whether heel correction is active */
+  heelCorrectionActive: boolean;
 }
 
 /** An event the user can track for */

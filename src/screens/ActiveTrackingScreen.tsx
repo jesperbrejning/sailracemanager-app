@@ -52,6 +52,9 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
     error,
     gpsStatus,
     duration,
+    heelAngle,
+    pitchAngle,
+    heelCorrectionActive,
     trackPoints,
     startTracking,
     stopTracking,
@@ -208,6 +211,28 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
             <Text style={styles.statCellLabel}>ACCURACY</Text>
           </View>
         </View>
+
+        {/* Heel Angle Display */}
+        {heelCorrectionActive && (
+          <View style={styles.heelRow}>
+            <View style={styles.heelIndicator}>
+              <View style={styles.heelBarContainer}>
+                <View style={[
+                  styles.heelBar,
+                  {
+                    width: `${Math.min(Math.abs(heelAngle) * 2, 100)}%`,
+                    backgroundColor: Math.abs(heelAngle) > 25 ? '#ef4444' : Math.abs(heelAngle) > 15 ? '#f59e0b' : '#4ade80',
+                    alignSelf: heelAngle >= 0 ? 'flex-end' : 'flex-start',
+                  },
+                ]} />
+              </View>
+              <Text style={styles.heelValue}>
+                {Math.abs(heelAngle).toFixed(1)}°{heelAngle >= 0 ? ' SB' : ' PS'}
+              </Text>
+            </View>
+            <Text style={styles.heelLabel}>HEEL{heelAngle !== 0 && (heelAngle > 0 ? ' (Starboard)' : ' (Port)')}</Text>
+          </View>
+        )}
 
         {/* Points status */}
         <View style={styles.pointsRow}>
@@ -416,6 +441,45 @@ const styles = StyleSheet.create({
     width: 1,
     height: 30,
     backgroundColor: '#1e3d66',
+  },
+  heelRow: {
+    backgroundColor: '#162d4d',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  heelIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  heelBarContainer: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#0f1f38',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  heelBar: {
+    height: '100%',
+    borderRadius: 4,
+    minWidth: 4,
+  },
+  heelValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#e0f2fe',
+    fontVariant: ['tabular-nums'],
+    width: 70,
+    textAlign: 'right',
+  },
+  heelLabel: {
+    fontSize: 9,
+    color: '#64748b',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginTop: 4,
   },
   pointsRow: {
     flexDirection: 'row',
