@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
+import { MagDebugLogger } from '../services/magDebugLogger';
 import {
   View,
   Text,
@@ -337,6 +338,34 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Magnetometer Debug Tools */}
+        <View style={styles.debugRow}>
+          <TouchableOpacity
+            style={[styles.debugButton, MagDebugLogger.isActive && styles.debugButtonActive]}
+            onPress={() => {
+              if (MagDebugLogger.isActive) {
+                MagDebugLogger.stop();
+                Alert.alert('Debug Log', `Logging stoppet. ${MagDebugLogger.rowCount} rækker gemt.`);
+              } else {
+                void MagDebugLogger.start();
+                Alert.alert('Debug Log', 'Magnetometer logging startet. Drej telefonen 360° og stop så loggen.');
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.debugButtonText}>
+              {MagDebugLogger.isActive ? '⏹ Stop mag-log' : '📝 Start mag-log'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.debugButton}
+            onPress={() => void MagDebugLogger.share()}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.debugButtonText}>📤 Send log</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Final Stats Modal */}
@@ -643,7 +672,31 @@ const styles = StyleSheet.create({
   },
   controlRow: {
     marginTop: 'auto',
-    paddingBottom: 20,
+    paddingBottom: 8,
+  },
+  debugRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingBottom: 16,
+    marginTop: 8,
+  },
+  debugButton: {
+    flex: 1,
+    backgroundColor: '#1e3d66',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2d5a9e',
+  },
+  debugButtonActive: {
+    backgroundColor: '#7f1d1d',
+    borderColor: '#ef4444',
+  },
+  debugButtonText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
   },
   startButton: {
     backgroundColor: '#e85d2a',
