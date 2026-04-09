@@ -2,13 +2,13 @@
  * Magnetometer Debug Logger
  *
  * Logs raw magnetometer values, tilt angles and computed HDG to a CSV file
- * on the device's document directory. The file can be shared/exported from
- * within the app so the developer can analyse the raw sensor data.
+ * on the device's document directory. Uses an in-memory buffer that is
+ * flushed to disk periodically to avoid the expo-file-system append issue.
  *
  * Usage:
  *   MagDebugLogger.start()   - begin logging
- *   MagDebugLogger.log(...)  - append a row
- *   MagDebugLogger.stop()    - stop logging
+ *   MagDebugLogger.log(...)  - buffer a row (auto-flushes every 50 rows)
+ *   MagDebugLogger.stop()    - flush remaining rows and stop logging
  *   MagDebugLogger.share()   - open share sheet to send the file
  */
 
@@ -17,12 +17,38 @@ import * as Sharing from 'expo-sharing';
 
 const LOG_FILENAME = 'srm_mag_debug.csv';
 const LOG_PATH = `${FileSystem.documentDirectory}${LOG_FILENAME}`;
+const FLUSH_EVERY = 50; // flush buffer to disk every N rows
+const MAX_ROWS = 10000;
+
+const CSV_HEADER = 'timestamp_ms,magX,magY,magZ,heel_deg,pitch_deg,Xh,Yh,hdg_deg\n';
 
 let isLogging = false;
 let rowCount = 0;
+let buffer: string[] = [];
 
-const CSV_HEADER =
-  'timestamp_ms,magX,magY,magZ,heel_deg,pitch_deg,Xh,Yh,hdg_deg\n';
+/** Flush the in-memory buffer to disk by reading existing content and appending */
+async function flush(): Promise<void> {
+  if (buffer.length === 0) return;
+  const chunk = buffer.join('');
+  buffer = [];
+
+  try {
+    // Read existing content
+    let existing = '';
+    const info = await FileSystem.getInfoAsync(LOG_PATH);
+    if (info.exists) {
+      existing = await FileSystem.readAsStringAsync(LOG_PATH, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+    }
+    // Write header + existing + new chunk
+    await FileSystem.writeAsStringAsync(LOG_PATH, existing + chunk, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+  } catch (e) {
+    console.error('[MagDebug] Flush failed:', e);
+  }
+}
 
 export const MagDebugLogger = {
   /** Start a new log session - overwrites any previous log */
@@ -33,13 +59,14 @@ export const MagDebugLogger = {
       });
       isLogging = true;
       rowCount = 0;
+      buffer = [];
       console.log(`[MagDebug] Logging started → ${LOG_PATH}`);
     } catch (e) {
       console.error('[MagDebug] Failed to start log:', e);
     }
   },
 
-  /** Append one row of sensor data to the log */
+  /** Buffer one row of sensor data; auto-flushes every FLUSH_EVERY rows */
   async log(
     magX: number,
     magY: number,
@@ -50,10 +77,7 @@ export const MagDebugLogger = {
     Yh: number,
     hdg: number,
   ): Promise<void> {
-    if (!isLogging) return;
-
-    // Limit log to 10 000 rows to avoid huge files (~600 KB)
-    if (rowCount >= 10000) return;
+    if (!isLogging || rowCount >= MAX_ROWS) return;
 
     const row =
       `${Date.now()},` +
@@ -62,25 +86,22 @@ export const MagDebugLogger = {
       `${Xh.toFixed(4)},${Yh.toFixed(4)},` +
       `${hdg.toFixed(1)}\n`;
 
-    try {
-      await FileSystem.writeAsStringAsync(LOG_PATH, row, {
-        encoding: FileSystem.EncodingType.UTF8,
-        // Append mode
-        ...(({ append: true } as unknown) as object),
-      });
-      rowCount++;
-    } catch {
-      // Silently ignore write errors during logging
+    buffer.push(row);
+    rowCount++;
+
+    if (buffer.length >= FLUSH_EVERY) {
+      await flush();
     }
   },
 
-  /** Stop logging */
-  stop(): void {
+  /** Flush remaining rows and stop logging */
+  async stop(): Promise<void> {
     isLogging = false;
-    console.log(`[MagDebug] Logging stopped. ${rowCount} rows written.`);
+    await flush();
+    console.log(`[MagDebug] Logging stopped. ${rowCount} rows written to ${LOG_PATH}`);
   },
 
-  /** Open the system share sheet so the user can email/AirDrop/etc. the file */
+  /** Open the system share sheet so the user can email/send the CSV file */
   async share(): Promise<void> {
     try {
       const info = await FileSystem.getInfoAsync(LOG_PATH);

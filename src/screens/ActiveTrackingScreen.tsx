@@ -345,11 +345,14 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
             style={[styles.debugButton, MagDebugLogger.isActive && styles.debugButtonActive]}
             onPress={() => {
               if (MagDebugLogger.isActive) {
-                MagDebugLogger.stop();
-                Alert.alert('Debug Log', `Logging stoppet. ${MagDebugLogger.rowCount} rækker gemt.`);
+                const rows = MagDebugLogger.rowCount;
+                void MagDebugLogger.stop().then(() => {
+                  Alert.alert('Debug Log', `Logging stoppet.\n${rows} rækker gemt.\nTryk 'Send log' for at sende filen.`);
+                });
               } else {
-                void MagDebugLogger.start();
-                Alert.alert('Debug Log', 'Magnetometer logging startet. Drej telefonen 360° og stop så loggen.');
+                void MagDebugLogger.start().then(() => {
+                  Alert.alert('Debug Log', 'Magnetometer logging startet!\n\nDrej telefonen LANGSOMT 360° (tag 30-60 sek).\nTryk derefter \'Stop mag-log\'.');
+                });
               }
             }}
             activeOpacity={0.7}
