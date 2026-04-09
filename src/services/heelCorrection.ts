@@ -275,10 +275,15 @@ function computeTiltCompensatedHDG(): void {
              + magY * cosHeel * sinPitch
              + magZ * cosPitch;
 
-  // DATA-VERIFIED: atan2(-Xh, +Zh) → N=360, E=90, S=180, W=270
-  // Negated vs. previous formula to correct mirror-image (180°↔360° swap).
-  // Equivalent to atan2(-magX, +magZ) on flat surface.
+  // Raw heading from magnetometer (mast-mounted, charging port down, display facing AFT).
+  // atan2(-Xh, Zh) gives the direction the BACK of the phone faces.
+  // Since display faces AFT (cockpit), we add 180° so the reading matches
+  // what the user sees when looking at the screen: if you face South (180°),
+  // the screen shows 180°.
   let hdgDeg = Math.atan2(-Xh, Zh) * (180 / Math.PI);
+
+  // +180° offset: compensate for display facing AFT (opposite to bow)
+  hdgDeg += 180;
 
   // Apply magnetic declination (Denmark ~3° East)
   hdgDeg += magneticDeclination;
