@@ -34,6 +34,13 @@ type Props = {
   route: RouteProp<any>;
 };
 
+/** Convert degrees to cardinal direction (N, NNE, NE, ENE, E, ...) */
+function degreesToCardinal(deg: number): string {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  const idx = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
+  return dirs[idx];
+}
+
 export default function ActiveTrackingScreen({ navigation, route }: Props) {
   const { eventId, eventName } = route.params as {
     eventId?: number;
@@ -55,6 +62,8 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
     heelAngle,
     pitchAngle,
     heelCorrectionActive,
+    hdg,
+    cog,
     trackPoints,
     startTracking,
     stopTracking,
@@ -209,6 +218,44 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
               {accuracy ? `${Math.round(accuracy)}m` : '--'}
             </Text>
             <Text style={styles.statCellLabel}>ACCURACY</Text>
+          </View>
+        </View>
+
+        {/* HDG & COG Row */}
+        <View style={styles.courseRow}>
+          <View style={styles.courseCell}>
+            <Text style={styles.courseCellValue}>
+              {hdg != null ? `${Math.round(hdg)}°` : '--'}
+            </Text>
+            <Text style={styles.courseCellLabel}>HDG</Text>
+            {hdg != null && (
+              <Text style={styles.courseCardinal}>
+                {degreesToCardinal(hdg)}
+              </Text>
+            )}
+          </View>
+          <View style={styles.courseDivider} />
+          <View style={styles.courseCompassContainer}>
+            <View style={[styles.courseCompassNeedle, {
+              transform: [{ rotate: `${hdg ?? 0}deg` }],
+              opacity: hdg != null ? 1 : 0.2,
+            }]} />
+            <View style={[styles.courseCompassCOG, {
+              transform: [{ rotate: `${cog ?? 0}deg` }],
+              opacity: cog != null ? 1 : 0.2,
+            }]} />
+          </View>
+          <View style={styles.courseDivider} />
+          <View style={styles.courseCell}>
+            <Text style={styles.courseCellValue}>
+              {cog != null ? `${Math.round(cog)}°` : '--'}
+            </Text>
+            <Text style={styles.courseCellLabel}>COG</Text>
+            {cog != null && (
+              <Text style={styles.courseCardinal}>
+                {degreesToCardinal(cog)}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -480,6 +527,75 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.5,
     marginTop: 4,
+  },
+  courseRow: {
+    flexDirection: 'row',
+    backgroundColor: '#162d4d',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  courseCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  courseCellValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#e0f2fe',
+    fontVariant: ['tabular-nums'],
+  },
+  courseCellLabel: {
+    fontSize: 9,
+    color: '#64748b',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  courseCardinal: {
+    fontSize: 11,
+    color: '#e85d2a',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  courseDivider: {
+    width: 1,
+    height: 50,
+    backgroundColor: '#1e3d66',
+  },
+  courseCompassContainer: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#0f1f38',
+    borderWidth: 1,
+    borderColor: '#1e3d66',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginHorizontal: 8,
+  },
+  courseCompassNeedle: {
+    position: 'absolute',
+    width: 2,
+    height: 20,
+    backgroundColor: '#e85d2a',
+    borderRadius: 1,
+    top: 6,
+    left: 25,
+    transformOrigin: 'bottom center',
+  },
+  courseCompassCOG: {
+    position: 'absolute',
+    width: 2,
+    height: 18,
+    backgroundColor: '#4ade80',
+    borderRadius: 1,
+    top: 8,
+    left: 25,
+    transformOrigin: 'bottom center',
   },
   pointsRow: {
     flexDirection: 'row',

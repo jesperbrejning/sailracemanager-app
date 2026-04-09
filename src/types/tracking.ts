@@ -21,6 +21,10 @@ export interface TrackingPoint {
   pitchAngle?: number;
   /** Whether GPS position was corrected for heel displacement */
   heelCorrected?: boolean;
+  /** Tilt-compensated magnetic heading (HDG) in degrees (0-360, 0=North). */
+  hdg?: number;
+  /** Course Over Ground (COG) from GPS in degrees (0-360, 0=North). Same as GPS heading. */
+  cog?: number;
 }
 
 /** Input for tracking.start */
@@ -103,6 +107,10 @@ export interface TrackingState {
   pitchAngle: number;
   /** Whether heel correction is active */
   heelCorrectionActive: boolean;
+  /** Tilt-compensated magnetic heading (HDG) in degrees (0-360). Null if magnetometer unavailable. */
+  hdg: number | null;
+  /** Course Over Ground (COG) from GPS in degrees (0-360). Null if not moving. */
+  cog: number | null;
 }
 
 /** An event the user can track for */

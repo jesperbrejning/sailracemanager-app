@@ -20,8 +20,8 @@
  * apply a decay filter (heel angle slowly returns to 0 over time).
  */
 
-import { DeviceMotion } from 'expo-sensors';
-import type { DeviceMotionMeasurement } from 'expo-sensors';
+import { DeviceMotion, Magnetometer } from 'expo-sensors';
+import type { DeviceMotionMeasurement, MagnetometerMeasurement } from 'expo-sensors';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -89,6 +89,26 @@ let decayTimer: ReturnType<typeof setInterval> | null = null;
 /** Phone height above waterline - configurable */
 let phoneHeightMeters = DEFAULT_PHONE_HEIGHT_METERS;
 
+// ─── Magnetometer / HDG state ────────────────────────────────────────────────
+
+/** Raw magnetometer values (µT) */
+let magX = 0;
+let magY = 0;
+let magZ = 0;
+
+/** Tilt-compensated magnetic heading in degrees (0–360, 0 = North, clockwise) */
+let currentHDG = 0;
+
+/** Magnetometer subscription */
+let magSubscription: { remove: () => void } | null = null;
+
+/** Smoothing alpha for HDG (lower = smoother, more lag) */
+const HDG_SMOOTHING_ALPHA = 0.1;
+
+/** Magnetic declination in degrees (positive = east). 0 = no correction.
+ *  For Denmark: ~3° East (2025). Can be updated from GPS location later. */
+let magneticDeclination = 3.0;
+
 // ─── Sensor Processing ─────────────────────────────────────────────────────
 
 /**
@@ -123,6 +143,62 @@ function processSensorData(data: DeviceMotionMeasurement): void {
   currentPitchAngle = currentPitchAngle + SMOOTHING_ALPHA * (pitchDeg - currentPitchAngle);
 
   lastSensorTimestamp = Date.now();
+
+  // Recompute HDG whenever tilt changes (uses latest magX/Y/Z)
+  computeTiltCompensatedHDG();
+}
+
+/**
+ * Process a magnetometer measurement.
+ * Stores raw values and recomputes tilt-compensated heading.
+ */
+function processMagnetometerData(data: MagnetometerMeasurement): void {
+  magX = data.x;
+  magY = data.y;
+  magZ = data.z;
+  computeTiltCompensatedHDG();
+}
+
+/**
+ * Compute tilt-compensated magnetic heading (HDG) from magnetometer + tilt angles.
+ *
+ * Standard 3-axis tilt compensation formula:
+ *   Xh = Bx * cos(pitch) + Bz * sin(pitch)
+ *   Yh = Bx * sin(roll) * sin(pitch) + By * cos(roll) - Bz * sin(roll) * cos(pitch)
+ *   HDG = atan2(-Yh, Xh) + declination
+ *
+ * where roll = heel angle (gamma), pitch = trim angle (beta).
+ *
+ * Without this correction, a 20° heel causes ~30-40° heading error.
+ */
+function computeTiltCompensatedHDG(): void {
+  const rollRad = currentHeelAngle * DEG_TO_RAD;   // heel (port/starboard)
+  const pitchRad = currentPitchAngle * DEG_TO_RAD; // trim (bow up/down)
+
+  const cosRoll = Math.cos(rollRad);
+  const sinRoll = Math.sin(rollRad);
+  const cosPitch = Math.cos(pitchRad);
+  const sinPitch = Math.sin(pitchRad);
+
+  // Tilt-compensated horizontal magnetic field components
+  const Xh = magX * cosPitch + magZ * sinPitch;
+  const Yh = magX * sinRoll * sinPitch + magY * cosRoll - magZ * sinRoll * cosPitch;
+
+  // Heading in degrees (atan2 returns -180 to +180)
+  let hdgDeg = Math.atan2(-Yh, Xh) * (180 / Math.PI);
+
+  // Apply magnetic declination to get true north heading
+  hdgDeg += magneticDeclination;
+
+  // Normalise to 0–360
+  hdgDeg = ((hdgDeg % 360) + 360) % 360;
+
+  // Smooth with exponential moving average
+  // Handle wrap-around (e.g. 359° → 1°) by working on the angular difference
+  let diff = hdgDeg - currentHDG;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  currentHDG = ((currentHDG + HDG_SMOOTHING_ALPHA * diff) + 360) % 360;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -144,16 +220,28 @@ export async function startHeelSensor(): Promise<boolean> {
     // Set update interval
     DeviceMotion.setUpdateInterval(SENSOR_UPDATE_INTERVAL_MS);
 
-    // Subscribe to sensor updates
+    // Subscribe to DeviceMotion (heel/pitch)
     subscription = DeviceMotion.addListener(processSensorData);
+
+    // Subscribe to Magnetometer (HDG)
+    const magAvailable = await Magnetometer.isAvailableAsync();
+    if (magAvailable) {
+      Magnetometer.setUpdateInterval(SENSOR_UPDATE_INTERVAL_MS);
+      magSubscription = Magnetometer.addListener(processMagnetometerData);
+      console.log('[HeelCorrection] Magnetometer started for HDG');
+    } else {
+      console.warn('[HeelCorrection] Magnetometer not available - HDG will be unavailable');
+    }
 
     isActive = true;
     isForeground = true;
     currentHeelAngle = 0;
     rawHeelAngle = 0;
     currentPitchAngle = 0;
+    currentHDG = 0;
+    magX = 0; magY = 0; magZ = 0;
 
-    console.log('[HeelCorrection] Sensor started');
+    console.log('[HeelCorrection] Sensor started (heel + HDG)');
     return true;
   } catch (err) {
     console.error('[HeelCorrection] Failed to start:', err);
@@ -171,6 +259,11 @@ export function stopHeelSensor(): void {
     subscription = null;
   }
 
+  if (magSubscription) {
+    magSubscription.remove();
+    magSubscription = null;
+  }
+
   if (decayTimer) {
     clearInterval(decayTimer);
     decayTimer = null;
@@ -180,6 +273,8 @@ export function stopHeelSensor(): void {
   currentHeelAngle = 0;
   rawHeelAngle = 0;
   currentPitchAngle = 0;
+  currentHDG = 0;
+  magX = 0; magY = 0; magZ = 0;
 
   console.log('[HeelCorrection] Sensor stopped');
 }
@@ -244,6 +339,24 @@ export function getRawHeelAngle(): number {
  */
 export function getPitchAngle(): number {
   return currentPitchAngle;
+}
+
+/**
+ * Get the tilt-compensated magnetic heading (HDG) in degrees.
+ * 0 = North, 90 = East, 180 = South, 270 = West.
+ * Returns null if magnetometer is not available.
+ */
+export function getHDG(): number | null {
+  if (!magSubscription && magX === 0 && magY === 0 && magZ === 0) return null;
+  return parseFloat(currentHDG.toFixed(1));
+}
+
+/**
+ * Set the magnetic declination for the current location.
+ * @param declinationDeg - Degrees east (positive) or west (negative)
+ */
+export function setMagneticDeclination(declinationDeg: number): void {
+  magneticDeclination = declinationDeg;
 }
 
 /**

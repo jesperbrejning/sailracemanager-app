@@ -32,6 +32,7 @@ import {
   stopHeelSensor,
   getHeelAngle,
   getPitchAngle,
+  getHDG,
   isHeelSensorActive,
   onAppBackground,
   onAppForeground,
@@ -64,6 +65,8 @@ export function useTracking() {
     heelAngle: 0,
     pitchAngle: 0,
     heelCorrectionActive: false,
+    hdg: null,
+    cog: null,
   });
 
   const [trackPoints, setTrackPoints] = useState<TrackingPoint[]>([]);
@@ -167,6 +170,12 @@ export function useTracking() {
       // Update heel data from the point (which was corrected in backgroundTracking)
       heelAngle: point.heelAngle ?? prev.heelAngle,
       pitchAngle: point.pitchAngle ?? prev.pitchAngle,
+      // COG comes directly from GPS heading field (already ground-referenced)
+      cog: (point.cog != null)
+        ? point.cog
+        : (point.heading != null && point.heading >= 0 ? point.heading : prev.cog),
+      // HDG is updated separately by the heel update timer, but also refresh here
+      hdg: getHDG() ?? prev.hdg,
     }));
   }, []);
 
@@ -225,6 +234,8 @@ export function useTracking() {
         heelAngle: 0,
         pitchAngle: 0,
         heelCorrectionActive: false,
+        hdg: null,
+        cog: null,
       }));
 
       try {
@@ -304,7 +315,7 @@ export function useTracking() {
           }
         }, 1000);
 
-        // Start heel angle UI update timer (updates heel display at 2Hz)
+        // Start heel angle UI update timer (updates heel + HDG display at 2Hz)
         if (heelStarted) {
           heelUpdateTimerRef.current = setInterval(() => {
             setState((prev) => ({
@@ -312,6 +323,7 @@ export function useTracking() {
               heelAngle: parseFloat(getHeelAngle().toFixed(1)),
               pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
               heelCorrectionActive: isHeelSensorActive(),
+              hdg: getHDG(),
             }));
           }, 500);
         }
@@ -450,6 +462,7 @@ export function useTracking() {
             heelAngle: parseFloat(getHeelAngle().toFixed(1)),
             pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
             heelCorrectionActive: isHeelSensorActive(),
+            hdg: getHDG(),
           }));
         }, 500);
       }
