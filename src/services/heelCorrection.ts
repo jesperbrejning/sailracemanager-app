@@ -25,8 +25,11 @@ import type { DeviceMotionMeasurement, MagnetometerMeasurement } from 'expo-sens
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** How often to sample device motion (ms). 10Hz is a good balance of accuracy vs battery. */
+/** How often to sample device motion (ms). 10Hz for heel/pitch, 2Hz for HDG display. */
 const SENSOR_UPDATE_INTERVAL_MS = 100;
+
+/** Magnetometer update interval (ms). 500ms = 2Hz for compass display. */
+const MAG_UPDATE_INTERVAL_MS = 500;
 
 /** 
  * Complementary filter alpha for smoothing heel angle.
@@ -162,16 +165,24 @@ function processMagnetometerData(data: MagnetometerMeasurement): void {
 /**
  * Compute tilt-compensated magnetic heading (HDG) from magnetometer + tilt angles.
  *
- * Standard 3-axis tilt compensation formula:
- *   Xh = Bx * cos(pitch) + Bz * sin(pitch)
- *   Yh = Bx * sin(roll) * sin(pitch) + By * cos(roll) - Bz * sin(roll) * cos(pitch)
- *   HDG = atan2(-Yh, Xh) + declination
+ * Expo Magnetometer on Android uses the Android sensor coordinate system:
+ *   x = points East (right side of phone in portrait)
+ *   y = points North (top of phone in portrait)
+ *   z = points up (out of screen)
  *
- * where roll = heel angle (gamma), pitch = trim angle (beta).
+ * Flat (no tilt) heading: HDG = atan2(x, y)  →  0=North, 90=East, 180=South, 270=West
+ *
+ * With tilt compensation (roll = heel, pitch = trim):
+ *   Xh = x * cos(pitch) + z * sin(pitch)
+ *   Yh = x * sin(roll) * sin(pitch) + y * cos(roll) - z * sin(roll) * cos(pitch)
+ *   HDG = atan2(Xh, Yh)   ← note: atan2(x,y) not atan2(y,x) for North-referenced heading
  *
  * Without this correction, a 20° heel causes ~30-40° heading error.
  */
 function computeTiltCompensatedHDG(): void {
+  // Skip if no magnetometer data yet
+  if (magX === 0 && magY === 0 && magZ === 0) return;
+
   const rollRad = currentHeelAngle * DEG_TO_RAD;   // heel (port/starboard)
   const pitchRad = currentPitchAngle * DEG_TO_RAD; // trim (bow up/down)
 
@@ -181,11 +192,12 @@ function computeTiltCompensatedHDG(): void {
   const sinPitch = Math.sin(pitchRad);
 
   // Tilt-compensated horizontal magnetic field components
+  // Using Expo/Android coordinate system: x=East, y=North, z=Up
   const Xh = magX * cosPitch + magZ * sinPitch;
   const Yh = magX * sinRoll * sinPitch + magY * cosRoll - magZ * sinRoll * cosPitch;
 
-  // Heading in degrees (atan2 returns -180 to +180)
-  let hdgDeg = Math.atan2(-Yh, Xh) * (180 / Math.PI);
+  // atan2(Xh, Yh) gives North-referenced clockwise heading (0=N, 90=E, 180=S, 270=W)
+  let hdgDeg = Math.atan2(Xh, Yh) * (180 / Math.PI);
 
   // Apply magnetic declination to get true north heading
   hdgDeg += magneticDeclination;
@@ -223,12 +235,12 @@ export async function startHeelSensor(): Promise<boolean> {
     // Subscribe to DeviceMotion (heel/pitch)
     subscription = DeviceMotion.addListener(processSensorData);
 
-    // Subscribe to Magnetometer (HDG)
+    // Subscribe to Magnetometer (HDG) at 2Hz
     const magAvailable = await Magnetometer.isAvailableAsync();
     if (magAvailable) {
-      Magnetometer.setUpdateInterval(SENSOR_UPDATE_INTERVAL_MS);
+      Magnetometer.setUpdateInterval(MAG_UPDATE_INTERVAL_MS); // 500ms = 2Hz
       magSubscription = Magnetometer.addListener(processMagnetometerData);
-      console.log('[HeelCorrection] Magnetometer started for HDG');
+      console.log('[HeelCorrection] Magnetometer started for HDG at 2Hz');
     } else {
       console.warn('[HeelCorrection] Magnetometer not available - HDG will be unavailable');
     }
