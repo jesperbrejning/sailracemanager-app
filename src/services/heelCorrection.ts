@@ -165,62 +165,72 @@ function processMagnetometerData(data: MagnetometerMeasurement): void {
 /**
  * Compute tilt-compensated magnetic heading (HDG) from magnetometer + tilt angles.
  *
- * Expo Magnetometer on Android uses the Android sensor coordinate system:
- *   x = points East (right side of phone in portrait)
- *   y = points North (top of phone in portrait)
- *   z = points up (out of screen)
+ * Expo Magnetometer on Android returns raw magnetometer values where:
+ *   x, y, z are in the phone's body frame (µT)
  *
- * Nautical convention: N=360 (or 0), E=090, S=180, W=270
+ * The standard tilt-compensation algorithm (from ST Application Note AN3192):
  *
- * Step 1 - Tilt compensation:
- *   Xh = Bx * cos(pitch) + Bz * sin(pitch)
- *   Yh = Bx * sin(roll) * sin(pitch) + By * cos(roll) - Bz * sin(roll) * cos(pitch)
+ *   Given roll (phi) and pitch (theta) from accelerometer/DeviceMotion:
  *
- * Step 2 - Heading (North-referenced, clockwise):
- *   hdg = atan2(Xh, Yh)   [atan2(east-component, north-component)]
- *   This gives: pointing North → 0°, pointing East → 90°, etc.
+ *   Xh = Bx * cos(theta) + By * sin(phi)*sin(theta) + Bz * cos(phi)*sin(theta)
+ *   Yh =                   By * cos(phi)             - Bz * sin(phi)
  *
- * Step 3 - Nautical display: 0° is shown as 360°
+ *   heading = atan2(-Yh, Xh)   → range -180 to +180
+ *   Normalise to 0-360, then convert 0 → 360 for nautical convention.
  *
- * Without tilt correction, a 20° heel causes ~30-40° heading error.
+ * NOTE: The exact axis mapping depends on how the phone is held.
+ * We assume portrait mode, phone roughly upright.
+ * DeviceMotion.rotation: beta=pitch (fore/aft tilt), gamma=roll (side tilt/heel)
  */
 function computeTiltCompensatedHDG(): void {
   // Skip if no magnetometer data yet
   if (magX === 0 && magY === 0 && magZ === 0) return;
 
-  const rollRad = currentHeelAngle * DEG_TO_RAD;   // heel (port/starboard)
-  const pitchRad = currentPitchAngle * DEG_TO_RAD; // trim (bow up/down)
+  // Use roll (heel) and pitch (trim) from DeviceMotion
+  const phi   = currentHeelAngle  * DEG_TO_RAD;  // roll  (gamma) - heel
+  const theta = currentPitchAngle * DEG_TO_RAD;  // pitch (beta)  - trim
 
-  const cosRoll = Math.cos(rollRad);
-  const sinRoll = Math.sin(rollRad);
-  const cosPitch = Math.cos(pitchRad);
-  const sinPitch = Math.sin(pitchRad);
+  const cosPhi   = Math.cos(phi);
+  const sinPhi   = Math.sin(phi);
+  const cosTheta = Math.cos(theta);
+  const sinTheta = Math.sin(theta);
 
-  // Tilt-compensated horizontal magnetic field components
-  // Expo/Android: x=East, y=North, z=Up
-  const Xh = magX * cosPitch + magZ * sinPitch;         // East component
-  const Yh = magX * sinRoll * sinPitch + magY * cosRoll  // North component
-            - magZ * sinRoll * cosPitch;
+  // ST AN3192 tilt-compensation formula
+  const Xh = magX * cosTheta
+            + magY * sinPhi * sinTheta
+            + magZ * cosPhi * sinTheta;
 
-  // atan2(east, north) → clockwise from North, range -180 to +180
-  let hdgDeg = Math.atan2(Xh, Yh) * (180 / Math.PI);
+  const Yh = magY * cosPhi
+            - magZ * sinPhi;
 
-  // Apply magnetic declination to get true north heading
+  // atan2(-Yh, Xh) gives heading clockwise from North
+  let hdgDeg = Math.atan2(-Yh, Xh) * (180 / Math.PI);
+
+  // Apply magnetic declination (Denmark ~3° East)
   hdgDeg += magneticDeclination;
 
-  // Normalise to 1–360 (nautical: North = 360, not 0)
+  // Normalise to 0–360
   hdgDeg = ((hdgDeg % 360) + 360) % 360;
-  if (hdgDeg === 0) hdgDeg = 360;
 
-  // Smooth with exponential moving average
-  // Handle wrap-around (e.g. 359° → 1°) by working on the angular difference
+  // Nautical convention: 0° = 360°
+  if (hdgDeg < 0.5) hdgDeg = 360;
+
+  // Debug log every ~5 seconds (every 10th call at 2Hz)
+  if (Math.random() < 0.1) {
+    console.log(
+      `[HDG] raw mag=(${magX.toFixed(1)},${magY.toFixed(1)},${magZ.toFixed(1)})` +
+      ` roll=${currentHeelAngle.toFixed(1)}° pitch=${currentPitchAngle.toFixed(1)}°` +
+      ` Xh=${Xh.toFixed(2)} Yh=${Yh.toFixed(2)} hdg=${hdgDeg.toFixed(1)}°`
+    );
+  }
+
+  // Smooth with exponential moving average, handling 359°→1° wrap-around
   let diff = hdgDeg - currentHDG;
-  if (diff > 180) diff -= 360;
+  if (diff > 180)  diff -= 360;
   if (diff < -180) diff += 360;
   let smoothed = currentHDG + HDG_SMOOTHING_ALPHA * diff;
-  // Re-normalise to 1–360 after smoothing
   smoothed = ((smoothed % 360) + 360) % 360;
-  currentHDG = smoothed === 0 ? 360 : smoothed;
+  currentHDG = smoothed < 0.5 ? 360 : smoothed;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
