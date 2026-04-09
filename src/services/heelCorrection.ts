@@ -170,14 +170,19 @@ function processMagnetometerData(data: MagnetometerMeasurement): void {
  *   y = points North (top of phone in portrait)
  *   z = points up (out of screen)
  *
- * Flat (no tilt) heading: HDG = atan2(x, y)  →  0=North, 90=East, 180=South, 270=West
+ * Nautical convention: N=360 (or 0), E=090, S=180, W=270
  *
- * With tilt compensation (roll = heel, pitch = trim):
- *   Xh = x * cos(pitch) + z * sin(pitch)
- *   Yh = x * sin(roll) * sin(pitch) + y * cos(roll) - z * sin(roll) * cos(pitch)
- *   HDG = atan2(Xh, Yh)   ← note: atan2(x,y) not atan2(y,x) for North-referenced heading
+ * Step 1 - Tilt compensation:
+ *   Xh = Bx * cos(pitch) + Bz * sin(pitch)
+ *   Yh = Bx * sin(roll) * sin(pitch) + By * cos(roll) - Bz * sin(roll) * cos(pitch)
  *
- * Without this correction, a 20° heel causes ~30-40° heading error.
+ * Step 2 - Heading (North-referenced, clockwise):
+ *   hdg = atan2(Xh, Yh)   [atan2(east-component, north-component)]
+ *   This gives: pointing North → 0°, pointing East → 90°, etc.
+ *
+ * Step 3 - Nautical display: 0° is shown as 360°
+ *
+ * Without tilt correction, a 20° heel causes ~30-40° heading error.
  */
 function computeTiltCompensatedHDG(): void {
   // Skip if no magnetometer data yet
@@ -192,25 +197,30 @@ function computeTiltCompensatedHDG(): void {
   const sinPitch = Math.sin(pitchRad);
 
   // Tilt-compensated horizontal magnetic field components
-  // Using Expo/Android coordinate system: x=East, y=North, z=Up
-  const Xh = magX * cosPitch + magZ * sinPitch;
-  const Yh = magX * sinRoll * sinPitch + magY * cosRoll - magZ * sinRoll * cosPitch;
+  // Expo/Android: x=East, y=North, z=Up
+  const Xh = magX * cosPitch + magZ * sinPitch;         // East component
+  const Yh = magX * sinRoll * sinPitch + magY * cosRoll  // North component
+            - magZ * sinRoll * cosPitch;
 
-  // atan2(Xh, Yh) gives North-referenced clockwise heading (0=N, 90=E, 180=S, 270=W)
+  // atan2(east, north) → clockwise from North, range -180 to +180
   let hdgDeg = Math.atan2(Xh, Yh) * (180 / Math.PI);
 
   // Apply magnetic declination to get true north heading
   hdgDeg += magneticDeclination;
 
-  // Normalise to 0–360
+  // Normalise to 1–360 (nautical: North = 360, not 0)
   hdgDeg = ((hdgDeg % 360) + 360) % 360;
+  if (hdgDeg === 0) hdgDeg = 360;
 
   // Smooth with exponential moving average
   // Handle wrap-around (e.g. 359° → 1°) by working on the angular difference
   let diff = hdgDeg - currentHDG;
   if (diff > 180) diff -= 360;
   if (diff < -180) diff += 360;
-  currentHDG = ((currentHDG + HDG_SMOOTHING_ALPHA * diff) + 360) % 360;
+  let smoothed = currentHDG + HDG_SMOOTHING_ALPHA * diff;
+  // Re-normalise to 1–360 after smoothing
+  smoothed = ((smoothed % 360) + 360) % 360;
+  currentHDG = smoothed === 0 ? 360 : smoothed;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -355,12 +365,14 @@ export function getPitchAngle(): number {
 
 /**
  * Get the tilt-compensated magnetic heading (HDG) in degrees.
- * 0 = North, 90 = East, 180 = South, 270 = West.
+ * Nautical convention: N=360, E=090, S=180, W=270.
  * Returns null if magnetometer is not available.
  */
 export function getHDG(): number | null {
   if (!magSubscription && magX === 0 && magY === 0 && magZ === 0) return null;
-  return parseFloat(currentHDG.toFixed(1));
+  const hdg = parseFloat(currentHDG.toFixed(1));
+  // Ensure nautical convention: 0 is displayed as 360
+  return hdg === 0 ? 360 : hdg;
 }
 
 /**

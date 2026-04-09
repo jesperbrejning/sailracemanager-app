@@ -34,11 +34,20 @@ type Props = {
   route: RouteProp<any>;
 };
 
-/** Convert degrees to cardinal direction (N, NNE, NE, ENE, E, ...) */
+/** Convert degrees to cardinal direction (N, NNE, NE, ENE, E, ...)
+ *  Handles nautical convention where 360 = North */
 function degreesToCardinal(deg: number): string {
   const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-  const idx = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
+  // Normalise 360 back to 0 for index calculation
+  const normalised = deg % 360;
+  const idx = Math.round(((normalised % 360) + 360) % 360 / 22.5) % 16;
   return dirs[idx];
+}
+
+/** Normalise GPS COG to nautical convention: 1-360 (0 shown as 360) */
+function normaliseCOG(deg: number): number {
+  const n = ((deg % 360) + 360) % 360;
+  return n === 0 ? 360 : n;
 }
 
 export default function ActiveTrackingScreen({ navigation, route }: Props) {
@@ -222,42 +231,52 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
         </View>
 
         {/* HDG & COG Row */}
-        <View style={styles.courseRow}>
-          <View style={styles.courseCell}>
-            <Text style={styles.courseCellValue}>
-              {hdg != null ? `${Math.round(hdg)}°` : '--'}
-            </Text>
-            <Text style={styles.courseCellLabel}>HDG</Text>
-            {hdg != null && (
-              <Text style={styles.courseCardinal}>
-                {degreesToCardinal(hdg)}
-              </Text>
-            )}
-          </View>
-          <View style={styles.courseDivider} />
-          <View style={styles.courseCompassContainer}>
-            <View style={[styles.courseCompassNeedle, {
-              transform: [{ rotate: `${hdg ?? 0}deg` }],
-              opacity: hdg != null ? 1 : 0.2,
-            }]} />
-            <View style={[styles.courseCompassCOG, {
-              transform: [{ rotate: `${cog ?? 0}deg` }],
-              opacity: cog != null ? 1 : 0.2,
-            }]} />
-          </View>
-          <View style={styles.courseDivider} />
-          <View style={styles.courseCell}>
-            <Text style={styles.courseCellValue}>
-              {cog != null ? `${Math.round(cog)}°` : '--'}
-            </Text>
-            <Text style={styles.courseCellLabel}>COG</Text>
-            {cog != null && (
-              <Text style={styles.courseCardinal}>
-                {degreesToCardinal(cog)}
-              </Text>
-            )}
-          </View>
-        </View>
+        {(() => {
+          // Normalise both to nautical convention (1-360, North=360)
+          const hdgDisplay = hdg != null ? (hdg === 0 ? 360 : hdg) : null;
+          const cogDisplay = cog != null ? normaliseCOG(cog) : null;
+          // For CSS rotation, 360 and 0 are identical - use raw value
+          const hdgRotate = hdg ?? 0;
+          const cogRotate = cog ?? 0;
+          return (
+            <View style={styles.courseRow}>
+              <View style={styles.courseCell}>
+                <Text style={styles.courseCellValue}>
+                  {hdgDisplay != null ? `${Math.round(hdgDisplay)}°` : '--'}
+                </Text>
+                <Text style={styles.courseCellLabel}>HDG</Text>
+                {hdgDisplay != null && (
+                  <Text style={styles.courseCardinal}>
+                    {degreesToCardinal(hdgDisplay)}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.courseDivider} />
+              <View style={styles.courseCompassContainer}>
+                <View style={[styles.courseCompassNeedle, {
+                  transform: [{ rotate: `${hdgRotate}deg` }],
+                  opacity: hdgDisplay != null ? 1 : 0.2,
+                }]} />
+                <View style={[styles.courseCompassCOG, {
+                  transform: [{ rotate: `${cogRotate}deg` }],
+                  opacity: cogDisplay != null ? 1 : 0.2,
+                }]} />
+              </View>
+              <View style={styles.courseDivider} />
+              <View style={styles.courseCell}>
+                <Text style={styles.courseCellValue}>
+                  {cogDisplay != null ? `${Math.round(cogDisplay)}°` : '--'}
+                </Text>
+                <Text style={styles.courseCellLabel}>COG</Text>
+                {cogDisplay != null && (
+                  <Text style={styles.courseCardinal}>
+                    {degreesToCardinal(cogDisplay)}
+                  </Text>
+                )}
+              </View>
+            </View>
+          );
+        })()}
 
         {/* Heel Angle Display */}
         {heelCorrectionActive && (
