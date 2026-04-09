@@ -20,17 +20,33 @@
  * apply a decay filter (heel angle slowly returns to 0 over time).
  */
 
-import { DeviceMotion, Magnetometer } from 'expo-sensors';
+import { DeviceMotion, Magnetometer, Gyroscope } from 'expo-sensors';
 import type { DeviceMotionMeasurement, MagnetometerMeasurement } from 'expo-sensors';
 import { MagDebugLogger } from './magDebugLogger';
+import {
+  updateMadgwick,
+  getMadgwickHeel,
+  getMadgwickPitch,
+  getMadgwickHDG,
+  resetMadgwick,
+  isMadgwickReady,
+} from './madgwickFilter';
+import {
+  kalmanPredict,
+  kalmanUpdate,
+  getKalmanSpeed,
+  resetKalmanSpeed,
+  initKalmanSpeed,
+  isKalmanReady,
+} from './kalmanSpeed';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 /** How often to sample device motion (ms). 10Hz for heel/pitch, 2Hz for HDG display. */
 const SENSOR_UPDATE_INTERVAL_MS = 100;
 
-/** Magnetometer update interval (ms). 500ms = 2Hz for compass display. */
-const MAG_UPDATE_INTERVAL_MS = 500;
+/** Magnetometer update interval (ms). 200ms = 5Hz for Madgwick input. */
+const MAG_UPDATE_INTERVAL_MS = 200;
 
 /** 
  * Complementary filter alpha for smoothing heel angle.
@@ -100,14 +116,21 @@ let magX = 0;
 let magY = 0;
 let magZ = 0;
 
-/** Tilt-compensated magnetic heading in degrees (0–360, 0 = North, clockwise) */
+/** Latest accelerometer values (m/s²) from DeviceMotion */
+let accelX = 0;
+let accelY = 0;
+let accelZ = 0;
+
+/** Latest gyroscope values (rad/s) from DeviceMotion */
+let gyroX = 0;
+let gyroY = 0;
+let gyroZ = 0;
+
+/** Tilt-compensated magnetic heading in degrees (0–360, nautical convention) */
 let currentHDG = 0;
 
 /** Magnetometer subscription */
 let magSubscription: { remove: () => void } | null = null;
-
-/** Smoothing alpha for HDG (lower = smoother, more lag) */
-const HDG_SMOOTHING_ALPHA = 0.1;
 
 /** Magnetic declination in degrees (positive = east). 0 = no correction.
  *  For Denmark: ~3° East (2025). Can be updated from GPS location later. */
@@ -130,26 +153,65 @@ let magneticDeclination = 3.0;
 function processSensorData(data: DeviceMotionMeasurement): void {
   if (!data.rotation) return;
 
-  const { beta, gamma } = data.rotation;
+  const now = Date.now();
 
-  // Convert from radians to degrees
-  const heelDeg = (gamma ?? 0) * (180 / Math.PI);
-  const pitchDeg = (beta ?? 0) * (180 / Math.PI);
+  // Extract accelerometer (m/s²) and gyroscope (rad/s) from DeviceMotion
+  if (data.acceleration) {
+    accelX = data.acceleration.x ?? 0;
+    accelY = data.acceleration.y ?? 0;
+    accelZ = data.acceleration.z ?? 0;
+  }
+  if (data.rotationRate) {
+    // DeviceMotion rotationRate is in degrees/s — convert to rad/s for Madgwick
+    gyroX = (data.rotationRate.alpha ?? 0) * DEG_TO_RAD;
+    gyroY = (data.rotationRate.beta  ?? 0) * DEG_TO_RAD;
+    gyroZ = (data.rotationRate.gamma ?? 0) * DEG_TO_RAD;
+  }
 
-  // Clamp to realistic range
-  const clampedHeel = Math.max(-MAX_HEEL_ANGLE_DEG, Math.min(MAX_HEEL_ANGLE_DEG, heelDeg));
+  // ── Madgwick AHRS update (uses gyro + accel + latest mag) ──────────────────
+  if (magX !== 0 || magY !== 0 || magZ !== 0) {
+    updateMadgwick(
+      { x: gyroX, y: gyroY, z: gyroZ },
+      { x: accelX, y: accelY, z: accelZ },
+      { x: magX,   y: magY,   z: magZ   },
+      now
+    );
+  }
 
-  // Store raw value
-  rawHeelAngle = clampedHeel;
+  // ── Extract heel/pitch from Madgwick (or fall back to DeviceMotion Euler) ──
+  if (isMadgwickReady()) {
+    const madgwickHeel  = getMadgwickHeel();
+    const madgwickPitch = getMadgwickPitch();
+    const clampedHeel = Math.max(-MAX_HEEL_ANGLE_DEG, Math.min(MAX_HEEL_ANGLE_DEG, madgwickHeel));
+    rawHeelAngle   = clampedHeel;
+    currentHeelAngle  = clampedHeel;   // Madgwick already smooths via quaternion integration
+    currentPitchAngle = madgwickPitch;
+  } else {
+    // Fallback: use DeviceMotion Euler angles until Madgwick converges
+    const { beta, gamma } = data.rotation;
+    const heelDeg  = (gamma ?? 0) * (180 / Math.PI);
+    const pitchDeg = (beta  ?? 0) * (180 / Math.PI);
+    const clampedHeel = Math.max(-MAX_HEEL_ANGLE_DEG, Math.min(MAX_HEEL_ANGLE_DEG, heelDeg));
+    rawHeelAngle = clampedHeel;
+    currentHeelAngle  = currentHeelAngle  + SMOOTHING_ALPHA * (clampedHeel - currentHeelAngle);
+    currentPitchAngle = currentPitchAngle + SMOOTHING_ALPHA * (pitchDeg    - currentPitchAngle);
+  }
 
-  // Apply complementary (exponential moving average) filter for smoothing
-  currentHeelAngle = currentHeelAngle + SMOOTHING_ALPHA * (clampedHeel - currentHeelAngle);
-  currentPitchAngle = currentPitchAngle + SMOOTHING_ALPHA * (pitchDeg - currentPitchAngle);
+  lastSensorTimestamp = now;
 
-  lastSensorTimestamp = Date.now();
+  // ── Kalman speed predict step (high-frequency IMU update) ──────────────────
+  kalmanPredict(accelZ, currentPitchAngle, now);
 
-  // Recompute HDG whenever tilt changes (uses latest magX/Y/Z)
-  computeTiltCompensatedHDG();
+  // ── Update HDG from Madgwick quaternion ────────────────────────────────────
+  if (isMadgwickReady()) {
+    const madgwickHDG = getMadgwickHDG(magneticDeclination);
+    if (madgwickHDG !== null) {
+      currentHDG = madgwickHDG;
+    }
+  } else {
+    // Fallback to simple tilt-compensated formula until Madgwick converges
+    computeTiltCompensatedHDG();
+  }
 }
 
 /**
@@ -278,8 +340,14 @@ export async function startHeelSensor(): Promise<boolean> {
     currentPitchAngle = 0;
     currentHDG = 0;
     magX = 0; magY = 0; magZ = 0;
+    accelX = 0; accelY = 0; accelZ = 0;
+    gyroX = 0; gyroY = 0; gyroZ = 0;
 
-    console.log('[HeelCorrection] Sensor started (heel + HDG)');
+    // Reset Madgwick and Kalman filters
+    resetMadgwick();
+    resetKalmanSpeed();
+
+    console.log('[HeelCorrection] Sensor started (Madgwick AHRS + Kalman speed)');
     return true;
   } catch (err) {
     console.error('[HeelCorrection] Failed to start:', err);
@@ -313,6 +381,12 @@ export function stopHeelSensor(): void {
   currentPitchAngle = 0;
   currentHDG = 0;
   magX = 0; magY = 0; magZ = 0;
+  accelX = 0; accelY = 0; accelZ = 0;
+  gyroX = 0; gyroY = 0; gyroZ = 0;
+
+  // Reset Madgwick and Kalman filters
+  resetMadgwick();
+  resetKalmanSpeed();
 
   console.log('[HeelCorrection] Sensor stopped');
 }
@@ -482,14 +556,7 @@ export function correctPositionForHeel(
 
 /**
  * Apply a simple low-pass filter to speed to reduce noise from heel-induced movement.
- * 
- * When the boat heels/rolls, the phone moves in an arc, adding apparent speed.
- * This filter smooths out these oscillations.
- * 
- * @param currentSpeed - Current GPS speed in m/s
- * @param previousFilteredSpeed - Previous filtered speed in m/s
- * @param alpha - Filter coefficient (0-1). Lower = smoother. Default 0.3.
- * @returns Filtered speed in m/s
+ * LEGACY: Use kalmanGpsUpdate + getKalmanSpeedMs for better results.
  */
 export function filterSpeedForHeel(
   currentSpeed: number | undefined | null,
@@ -497,9 +564,38 @@ export function filterSpeedForHeel(
   alpha: number = 0.3
 ): number {
   if (currentSpeed == null || currentSpeed < 0) return previousFilteredSpeed;
-
-  // If heel angle is significant, use stronger filtering
   const heelFactor = Math.abs(currentHeelAngle) > 15 ? 0.15 : alpha;
-
   return previousFilteredSpeed + heelFactor * (currentSpeed - previousFilteredSpeed);
+}
+
+/**
+ * Feed a new GPS speed measurement into the Kalman filter.
+ * Call this every time a GPS location update arrives.
+ *
+ * @param gpsSpeedMs - GPS speed in m/s (from location.coords.speed)
+ */
+export function kalmanGpsUpdate(gpsSpeedMs: number): void {
+  if (!isKalmanReady()) {
+    initKalmanSpeed(gpsSpeedMs);
+  } else {
+    kalmanUpdate(gpsSpeedMs);
+  }
+}
+
+/**
+ * Get the Kalman-fused speed in m/s.
+ * This is more responsive than raw GPS speed (updates at IMU rate, ~10Hz)
+ * and more accurate than raw IMU (corrected by GPS every second).
+ *
+ * Returns raw GPS speed equivalent if Kalman filter is not yet ready.
+ */
+export function getKalmanSpeedMs(): number {
+  return getKalmanSpeed();
+}
+
+/**
+ * Get the Kalman-fused speed in knots.
+ */
+export function getKalmanSpeedKnots(): number {
+  return getKalmanSpeed() * 1.94384;
 }

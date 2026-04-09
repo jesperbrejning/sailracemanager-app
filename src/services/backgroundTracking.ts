@@ -24,6 +24,8 @@ import {
   getHeelAngle,
   getPitchAngle,
   filterSpeedForHeel,
+  kalmanGpsUpdate,
+  getKalmanSpeedMs,
 } from './heelCorrection';
 import type { TrackingPoint } from '../types/tracking';
 
@@ -39,7 +41,7 @@ let lastTimestamp = 0;
 let totalCollectedCount = 0; // Counts ALL points (foreground + background)
 let sendPointsCallback: ((sessionId: number, points: TrackingPoint[]) => Promise<void>) | null = null;
 let onLocationUpdateCallback: ((point: TrackingPoint) => void) | null = null;
-let lastFilteredSpeed = 0; // For heel-corrected speed filtering
+let lastFilteredSpeed = 0; // Legacy fallback speed filter
 
 /**
  * Define the background location task.
@@ -63,10 +65,18 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
       location.coords.heading
     );
 
-    // Apply speed filtering for heel-induced noise
+    // Feed GPS speed into Kalman filter for fused speed estimate
     const rawSpeed = location.coords.speed ?? undefined;
-    if (rawSpeed != null) {
-      lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
+    let fusedSpeed: number | undefined;
+    if (rawSpeed != null && rawSpeed >= 0) {
+      kalmanGpsUpdate(rawSpeed);
+      fusedSpeed = parseFloat(getKalmanSpeedMs().toFixed(3));
+    } else {
+      // Fallback legacy filter
+      if (rawSpeed != null) {
+        lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
+        fusedSpeed = lastFilteredSpeed;
+      }
     }
 
     const point: TrackingPoint = {
@@ -75,7 +85,7 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
       accuracy: location.coords.accuracy ?? undefined,
       altitude: location.coords.altitude ?? undefined,
       altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
-      speed: rawSpeed != null ? lastFilteredSpeed : undefined,
+      speed: fusedSpeed,
       heading: location.coords.heading ?? undefined,
       timestamp: location.timestamp,
       heelAngle: parseFloat(getHeelAngle().toFixed(1)),
