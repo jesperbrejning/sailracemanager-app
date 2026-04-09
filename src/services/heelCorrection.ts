@@ -166,31 +166,24 @@ function processMagnetometerData(data: MagnetometerMeasurement): void {
 /**
  * Compute tilt-compensated magnetic heading (HDG) from magnetometer + tilt angles.
  *
- * MOUNTING ASSUMPTION: Phone is mounted on the mast, upright (portrait),
- * with the DISPLAY FACING AFT (towards the cockpit).
+ * MOUNTING: Phone mounted on mast, portrait/upright, display facing AFT (cockpit).
  *
- * In this orientation, the phone's axes map to the boat as follows:
- *   Phone X  → points to STARBOARD
- *   Phone Y  → points AFT (towards cockpit)
- *   Phone Z  → points UP (towards sky)
+ * DATA-VERIFIED AXIS MAPPING (from 360° rotation test):
+ *   Phone X → varies with heading (horizontal, starboard)
+ *   Phone Y → nearly constant (~-53 µT) = points along mast (vertical/up)
+ *   Phone Z → varies with heading (horizontal, fore/aft)
  *
- * For a flat, level phone in this orientation:
- *   - Heading North: magX ≈ 0, magY ≈ -H (H = horizontal field strength)
- *   - Heading East:  magX ≈ H, magY ≈ 0
- *   - Heading South: magX ≈ 0, magY ≈ +H
- *   - Heading West:  magX ≈ -H, magY ≈ 0
+ * Since Y is vertical, the horizontal heading components are X and Z.
+ * Verified best flat formula: atan2(+magX, -magZ) → N=360, E=90, S=180, W=270
  *
- * So the flat (no tilt) heading formula is: atan2(magX, -magY)
- * This gives 0=N, 90=E, 180=S, 270=W.
+ * Tilt compensation for heel (rotation around Z-axis in this mounting):
+ *   Xh = Bx * cos(heel) + By * sin(heel)
+ *   Zh = -Bx * sin(heel) * sin(pitch) + By * cos(heel) * sin(pitch) + Bz * cos(pitch)
+ *   HDG = atan2(Xh, -Zh)
  *
- * With tilt compensation for heel (roll around Y-axis for mast mount):
- *   Xh = Bx * cos(pitch) - Bz * sin(pitch)
- *   Yh = Bx * sin(heel) * sin(pitch) + By * cos(heel) + Bz * sin(heel) * cos(pitch)
- *   HDG = atan2(Xh, -Yh)
- *
- * DeviceMotion.rotation for mast-mounted phone:
- *   beta  (pitch) = fore/aft tilt of mast
- *   gamma (roll)  = heel (port/starboard)
+ * DeviceMotion.rotation for mast-mounted phone (display facing aft):
+ *   gamma (roll)  = heel (port/starboard tilt)
+ *   beta  (pitch) = fore/aft mast tilt
  */
 function computeTiltCompensatedHDG(): void {
   // Skip if no magnetometer data yet
@@ -204,16 +197,17 @@ function computeTiltCompensatedHDG(): void {
   const cosPitch = Math.cos(pitch);
   const sinPitch = Math.sin(pitch);
 
-  // Tilt-compensated components for mast-mounted phone (display facing aft)
-  const Xh =  magX * cosPitch
-             - magZ * sinPitch;
+  // Tilt-compensated horizontal components
+  // X and Z are the horizontal axes (Y is vertical along mast)
+  const Xh =  magX * cosHeel
+             + magY * sinHeel;
 
-  const Yh =  magX * sinHeel * sinPitch
-             + magY * cosHeel
-             + magZ * sinHeel * cosPitch;
+  const Yh = -magX * sinHeel * sinPitch
+             + magY * cosHeel * sinPitch
+             + magZ * cosPitch;
 
   // atan2(Xh, -Yh): North-referenced, clockwise
-  // N=0°, E=90°, S=180°, W=270°
+  // Verified: N=360, E=90, S=180, W=270
   let hdgDeg = Math.atan2(Xh, -Yh) * (180 / Math.PI);
 
   // Apply magnetic declination (Denmark ~3° East)
