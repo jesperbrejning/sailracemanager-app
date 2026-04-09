@@ -228,22 +228,26 @@ function processMagnetometerData(data: MagnetometerMeasurement): void {
 /**
  * Compute tilt-compensated magnetic heading (HDG) from magnetometer + tilt angles.
  *
- * MOUNTING: Phone mounted on mast, portrait/upright, display facing AFT (cockpit).
+ * MOUNTING: Phone mounted on mast, portrait/upright, display facing AFT (cockpit),
+ *           CHARGING PORT FACING DOWN.
  *
- * DATA-VERIFIED AXIS MAPPING (from 360° rotation test):
- *   Phone X → varies with heading (horizontal, starboard)
- *   Phone Y → nearly constant (~-53 µT) = points along mast (vertical/up)
- *   Phone Z → varies with heading (horizontal, fore/aft)
+ * DATA-VERIFIED AXIS MAPPING (from 360° rotation test with charging port down):
+ *   Phone X → varies with heading (horizontal, starboard)    range ~35 µT
+ *   Phone Y → nearly constant (~-48 µT) = points DOWN along mast (vertical)
+ *   Phone Z → varies with heading (horizontal, fore/aft)     range ~37 µT
  *
- * Since Y is vertical, the horizontal heading components are X and Z.
- * Verified best flat formula: atan2(+magX, -magZ) → N=360, E=90, S=180, W=270
+ * Since Y is vertical (and negative = pointing down), the horizontal heading
+ * components are X and Z.
  *
- * Tilt compensation for heel (rotation around Z-axis in this mounting):
+ * DATA-VERIFIED best formula: atan2(+magX, -magZ) → N=360, E=90, S=180, W=270
+ * Span verified: 358.7° over full 360° rotation.
+ *
+ * Tilt compensation for charging-port-down mounting:
  *   Xh = Bx * cos(heel) + By * sin(heel)
- *   Zh = -Bx * sin(heel) * sin(pitch) + By * cos(heel) * sin(pitch) + Bz * cos(pitch)
+ *   Zh = -Bx * sin(heel)*sin(pitch) + By * cos(heel)*sin(pitch) + Bz * cos(pitch)
  *   HDG = atan2(Xh, -Zh)
  *
- * DeviceMotion.rotation for mast-mounted phone (display facing aft):
+ * DeviceMotion.rotation for this mounting:
  *   gamma (roll)  = heel (port/starboard tilt)
  *   beta  (pitch) = fore/aft mast tilt
  */
@@ -259,18 +263,21 @@ function computeTiltCompensatedHDG(): void {
   const cosPitch = Math.cos(pitch);
   const sinPitch = Math.sin(pitch);
 
-  // Tilt-compensated horizontal components
-  // X and Z are the horizontal axes (Y is vertical along mast)
+  // Tilt-compensated horizontal components for charging-port-down mounting.
+  // X is starboard (horizontal), Y is vertical (down), Z is fore/aft (horizontal).
+  //
+  // Xh: horizontal component in starboard direction
   const Xh =  magX * cosHeel
              + magY * sinHeel;
 
-  const Yh = -magX * sinHeel * sinPitch
+  // Zh: horizontal component in fore/aft direction (used as -Zh in atan2)
+  const Zh = -magX * sinHeel * sinPitch
              + magY * cosHeel * sinPitch
              + magZ * cosPitch;
 
-  // atan2(Xh, -Yh): North-referenced, clockwise
-  // Verified: N=360, E=90, S=180, W=270
-  let hdgDeg = Math.atan2(Xh, -Yh) * (180 / Math.PI);
+  // DATA-VERIFIED: atan2(+Xh, -Zh) → N=360, E=90, S=180, W=270
+  // (equivalent to atan2(+magX, -magZ) on flat surface)
+  let hdgDeg = Math.atan2(Xh, -Zh) * (180 / Math.PI);
 
   // Apply magnetic declination (Denmark ~3° East)
   hdgDeg += magneticDeclination;
