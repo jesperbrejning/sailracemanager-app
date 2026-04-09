@@ -275,9 +275,10 @@ function computeTiltCompensatedHDG(): void {
              + magY * cosHeel * sinPitch
              + magZ * cosPitch;
 
-  // DATA-VERIFIED: atan2(+Xh, -Zh) → N=360, E=90, S=180, W=270
-  // (equivalent to atan2(+magX, -magZ) on flat surface)
-  let hdgDeg = Math.atan2(Xh, -Zh) * (180 / Math.PI);
+  // DATA-VERIFIED: atan2(-Xh, +Zh) → N=360, E=90, S=180, W=270
+  // Negated vs. previous formula to correct mirror-image (180°↔360° swap).
+  // Equivalent to atan2(-magX, +magZ) on flat surface.
+  let hdgDeg = Math.atan2(-Xh, Zh) * (180 / Math.PI);
 
   // Apply magnetic declination (Denmark ~3° East)
   hdgDeg += magneticDeclination;
