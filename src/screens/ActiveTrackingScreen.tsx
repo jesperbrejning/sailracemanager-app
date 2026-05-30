@@ -197,7 +197,7 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
         {onShowEventList && <View style={styles.backButton} />}
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {activeEvent?.name ?? routeEventName || 'SailRaceManager'}
+            {(activeEvent?.name ?? routeEventName) || 'SailRaceManager'}
           </Text>
           <View style={styles.gpsIndicator}>
             <View style={[styles.gpsDot, { backgroundColor: gpsColor }]} />
