@@ -247,8 +247,7 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
             <View style={styles.waitingContent}>
               <Text style={styles.waitingTitle}>Ingen tilmeldte events</Text>
               <Text style={styles.waitingSubtitle}>
-                Tilmeld dig et event på sailracemanager.com for at se det her.{'
-'}Du kan altid bruge Free Sailing nedenfor.
+                {'Tilmeld dig et event på sailracemanager.com for at se det her.\nDu kan altid bruge Free Sailing nedenfor.'}
               </Text>
             </View>
           </View>
