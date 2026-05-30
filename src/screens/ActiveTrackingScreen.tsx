@@ -41,6 +41,7 @@ import type { RouteProp } from '@react-navigation/native';
 type Props = {
   navigation: NativeStackNavigationProp<any>;
   route: RouteProp<any>;
+  onShowEventList?: () => void; // Optional: called when user wants to see event list
 };
 
 /** Convert degrees to cardinal direction */
@@ -57,11 +58,10 @@ function normaliseCOG(deg: number): number {
   return n === 0 ? 360 : n;
 }
 
-export default function ActiveTrackingScreen({ navigation, route }: Props) {
-  const { eventId, eventName } = route.params as {
-    eventId?: number;
-    eventName: string;
-  };
+export default function ActiveTrackingScreen({ navigation, route, onShowEventList }: Props) {
+  const routeParams = (route?.params ?? {}) as { eventId?: number; eventName?: string };
+  const eventId = routeParams.eventId;
+  const routeEventName = routeParams.eventName ?? '';
 
   const { isAuthenticated } = useAuth();
 
@@ -149,8 +149,11 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
   const handleDismissStats = useCallback(() => {
     setShowStats(false);
     setFinalStats(null);
-    navigation.goBack();
-  }, [navigation]);
+    // Only go back if we're in a stack (not embedded in a tab)
+    if (!onShowEventList) {
+      navigation.goBack();
+    }
+  }, [navigation, onShowEventList]);
 
   // GPS status indicator color
   const gpsColor =
@@ -173,24 +176,28 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => {
-            if (isTracking) {
-              Alert.alert(
-                'Tracking Active',
-                'Tracking will continue in the background if you leave this screen.'
-              );
-            } else {
-              navigation.goBack();
-            }
-          }}
-          style={styles.backButton}
-        >
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
+        {/* Back/menu button – hidden when used as tab (onShowEventList present) */}
+        {!onShowEventList && (
+          <TouchableOpacity
+            onPress={() => {
+              if (isTracking) {
+                Alert.alert(
+                  'Tracking Active',
+                  'Tracking will continue in the background if you leave this screen.'
+                );
+              } else {
+                navigation.goBack();
+              }
+            }}
+            style={styles.backButton}
+          >
+            <Text style={styles.backButtonText}>←</Text>
+          </TouchableOpacity>
+        )}
+        {onShowEventList && <View style={styles.backButton} />}
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {activeEvent?.name ?? eventName}
+            {activeEvent?.name ?? routeEventName || 'SailRaceManager'}
           </Text>
           <View style={styles.gpsIndicator}>
             <View style={[styles.gpsDot, { backgroundColor: gpsColor }]} />
@@ -228,6 +235,20 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
               <Text style={styles.waitingTitle}>{activeEvent.name}</Text>
               <Text style={styles.waitingSubtitle}>
                 GPS tracking starter automatisk når race-officeren starter timeren
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* No events at all – prompt to register */}
+        {!autoTracking.isLoading && autoTracking.myEvents.length === 0 && (
+          <View style={styles.waitingBanner}>
+            <Text style={styles.waitingIcon}>⛵</Text>
+            <View style={styles.waitingContent}>
+              <Text style={styles.waitingTitle}>Ingen tilmeldte events</Text>
+              <Text style={styles.waitingSubtitle}>
+                Tilmeld dig et event på sailracemanager.com for at se det her.{'
+'}Du kan altid bruge Free Sailing nedenfor.
               </Text>
             </View>
           </View>
@@ -395,6 +416,19 @@ export default function ActiveTrackingScreen({ navigation, route }: Props) {
                 🤖 GPS tracking styres automatisk af race-timeren
               </Text>
             </View>
+          )}
+
+          {/* Free Sailing shortcut */}
+          {!isTracking && (
+            <TouchableOpacity
+              style={styles.freeSailButton}
+              onPress={async () => {
+                await startTracking({ eventId: undefined });
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.freeSailButtonText}>⛵ Start Free Sailing</Text>
+            </TouchableOpacity>
           )}
 
           {/* Magnetometer Debug Tools */}
@@ -801,6 +835,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94a3b8',
     textAlign: 'center',
+  },
+  freeSailButton: {
+    backgroundColor: '#162d4d',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e85d2a40',
+  },
+  freeSailButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#e85d2a',
   },
   debugRow: {
     flexDirection: 'row',

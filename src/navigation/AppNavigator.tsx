@@ -16,7 +16,6 @@ import { View, Text, StyleSheet } from 'react-native';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
-import EventSelectScreen from '../screens/EventSelectScreen';
 import ActiveTrackingScreen from '../screens/ActiveTrackingScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -26,7 +25,7 @@ export type RootStackParamList = {
   Login: undefined;
   Main: undefined;
   EventSelect: undefined;
-  ActiveTracking: { eventId?: number; eventName: string };
+  ActiveTracking: { eventId?: number; eventName?: string };
   History: undefined;
   Profile: undefined;
 };
@@ -49,11 +48,20 @@ function MainTabs({ navigation }: any) {
     setActiveTab(tab);
   };
 
+  // Fake route params – ActiveTrackingScreen auto-detects the event via useAutoTracking
+  const fakeRoute = React.useMemo(() => ({ params: { eventId: undefined, eventName: '' } }), []);
+
   return (
     <View style={styles.mainContainer}>
       {/* Content */}
       <View style={styles.contentContainer}>
-        {activeTab === 'track' && <EventSelectScreen navigation={navigation} />}
+        {activeTab === 'track' && (
+          <ActiveTrackingScreen
+            navigation={navigation}
+            route={fakeRoute as any}
+            onShowEventList={() => handleTabPress('track')}
+          />
+        )}
         {activeTab === 'history' && <HistoryScreen />}
         {activeTab === 'profile' && <ProfileScreen />}
       </View>
