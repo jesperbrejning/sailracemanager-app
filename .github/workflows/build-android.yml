@@ -1,18 +1,16 @@
 name: Build Android APK
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,7 +38,6 @@ jobs:
       - name: Ensure gradle properties are set
         run: |
           cat >> android/gradle.properties << 'EOF'
-
           hermesEnabled=true
           newArchEnabled=false
           reactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64
@@ -48,7 +45,6 @@ jobs:
 
       - name: Remove codegen-generated ViewManager interfaces (Old Arch fix)
         run: |
-          # Remove any codegen-generated files that reference NewArch-only classes
           find android -path "*/com/facebook/react/viewmanagers/*" -name "*.java" -delete 2>/dev/null || true
           echo "Cleaned codegen viewmanager interfaces"
 
@@ -59,22 +55,68 @@ jobs:
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Find APK
+      - name: Get version from app.json
+        id: get_version
+        run: |
+          VERSION=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          APK_NAME="SailRaceManager-v${VERSION}-${SHORT_SHA}.apk"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+
+      - name: Find and rename APK
         id: find_apk
         run: |
           APK_PATH=$(find android/app/build/outputs/apk -name "*.apk" | head -1)
-          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-          echo "Found APK at: $APK_PATH"
-          ls -lh $APK_PATH
+          APK_NAME="${{ steps.get_version.outputs.apk_name }}"
+          DEST_PATH="$(dirname $APK_PATH)/$APK_NAME"
+          cp "$APK_PATH" "$DEST_PATH"
+          echo "apk_path=$DEST_PATH" >> $GITHUB_OUTPUT
+          ls -lh "$DEST_PATH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SailRaceManager-Android-${{ github.sha }}
-          path: android/app/build/outputs/apk/**/*.apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
           retention-days: 30
 
-      - name: Create Release (on tag push)
+      # Slet gammel "latest" release og opret ny ved hvert push til main
+      - name: Delete existing latest release (if any)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          gh release delete latest --yes 2>/dev/null || true
+          git push origin :refs/tags/latest 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create/update latest release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest Build – v${{ steps.get_version.outputs.version }}"
+          body: |
+            ## SailRaceManager Android App – Latest Build
+
+            **Version:** v${{ steps.get_version.outputs.version }}
+            **Commit:** ${{ github.sha }}
+            **Bygget:** ${{ github.event.head_commit.timestamp }}
+
+            ### Ændringer i denne build
+            ${{ github.event.head_commit.message }}
+
+            ---
+            *Download APK-filen nedenfor og installer på din Android-telefon.*
+            > **Installation:** Gå til Indstillinger → Sikkerhed → Tillad installation fra ukendte kilder
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Versioned release ved tag-push (f.eks. v1.3.0)
+      - name: Create versioned release (on tag push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
