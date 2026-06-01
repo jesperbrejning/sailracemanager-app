@@ -19,6 +19,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Alert, Linking, Platform } from 'react-native';
 import { CONFIG } from '../config';
 import { addPendingBatch } from './offlineStorage';
+import { sendPointsDirect } from './directSender';
 import {
   correctPositionForHeel,
   getHeelAngle,
@@ -119,24 +120,27 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
  */
 async function flushBuffer(): Promise<void> {
   if (pointBuffer.length === 0 || !activeSessionId) return;
-
+  const sessionId = activeSessionId;
   const points = [...pointBuffer];
   pointBuffer = [];
-
   // Split into batches of MAX_BATCH_SIZE
   for (let i = 0; i < points.length; i += CONFIG.GPS.MAX_BATCH_SIZE) {
     const batch = points.slice(i, i + CONFIG.GPS.MAX_BATCH_SIZE);
-
+    // Try React hook callback first (foreground / screen on)
     if (sendPointsCallback) {
       try {
-        await sendPointsCallback(activeSessionId, batch);
+        await sendPointsCallback(sessionId, batch);
+        continue;
       } catch (err) {
-        console.warn('[BackgroundTracking] Failed to send points, queuing offline:', err);
-        await addPendingBatch(activeSessionId, batch);
+        console.warn('[BackgroundTracking] Hook callback failed, falling back to direct fetch:', err);
       }
-    } else {
-      // No callback set (app might be fully backgrounded), store offline
-      await addPendingBatch(activeSessionId, batch);
+    }
+    // Fallback: direct fetch (works when screen is off / app backgrounded)
+    try {
+      await sendPointsDirect(sessionId, batch);
+    } catch (err) {
+      console.warn('[BackgroundTracking] Direct fetch failed, queuing offline:', err);
+      await addPendingBatch(sessionId, batch);
     }
   }
 }
