@@ -18,7 +18,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Alert, Linking, Platform } from 'react-native';
 import { CONFIG } from '../config';
-import { addPendingBatch } from './offlineStorage';
+import { addPendingBatch, getActiveSession } from './offlineStorage';
 import { sendPointsDirect } from './directSender';
 import {
   correctPositionForHeel,
@@ -109,8 +109,22 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
     }
   }
 
-  // Flush buffer if we have enough points or enough time has passed
-  if (pointBuffer.length >= 10 && activeSessionId) {
+  // Flush buffer if we have enough points
+  // NOTE: In background task (screen off), activeSessionId may be null because
+  // the background task runs in an isolated JS context. Read from AsyncStorage.
+  let sessionId = activeSessionId;
+  if (!sessionId) {
+    try {
+      const saved = await getActiveSession();
+      if (saved?.sessionId) {
+        sessionId = saved.sessionId;
+        activeSessionId = sessionId; // cache for subsequent calls
+      }
+    } catch (e) {
+      console.warn('[BackgroundTracking] Could not read sessionId from storage:', e);
+    }
+  }
+  if (pointBuffer.length >= 10 && sessionId) {
     await flushBuffer();
   }
 });
