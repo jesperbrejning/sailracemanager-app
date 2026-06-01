@@ -13,8 +13,9 @@ import { View, Text, StyleSheet } from 'react-native';
 
 // Procedure-specific countdown lengths (mirrors browser LiveTracking.tsx)
 const PROCEDURE_TOTAL_SECONDS: Record<string, number> = {
-  standard: 360, // 6-5-4-1-0 → 6 minutes
-  short: 240,    // 4-3-2-1-0 → 4 minutes
+  standard: 360,   // 6-5-4-1-0 → 6 minutes
+  short: 240,      // 4-3-2-1-0 → 4 minutes
+  one_minute: 60,  // 1-0       → 1 minute
 };
 
 interface SyncSignal {
@@ -37,18 +38,23 @@ const SHORT_SYNC_SIGNALS: SyncSignal[] = [
   { timeSeconds: 60,  label: '1:00' },
   { timeSeconds: 0,   label: '0:00' },
 ];
-
+const ONE_MINUTE_SYNC_SIGNALS: SyncSignal[] = [
+  { timeSeconds: 60, label: '1:00' },
+  { timeSeconds: 0,  label: '0:00' },
+];
 function getSyncSignals(procedure: string): SyncSignal[] {
+  if (procedure === 'one_minute') return ONE_MINUTE_SYNC_SIGNALS;
   return procedure === 'short' ? SHORT_SYNC_SIGNALS : STANDARD_SYNC_SIGNALS;
 }
-
 function getSyncProcedureLabel(procedure: string): string {
+  if (procedure === 'one_minute') return '1-0';
   return procedure === 'short' ? '4-3-2-1-0' : '6-5-4-1-0';
 }
-
 function getSyncPhaseLabel(remainingSec: number, procedure: string): string {
   if (remainingSec <= 0) return 'START';
-  if (procedure === 'standard') {
+  if (procedure === 'one_minute') {
+    return 'ADVARSELSSIGNAL'; // 1:00–0:01 (kun én fase)
+  } else if (procedure === 'standard') {
     if (remainingSec > 300) return 'ADVARSELSSIGNAL';
     if (remainingSec > 240) return 'FORBEREDELSESSIGNAL';
     if (remainingSec > 60)  return 'MELLEMSIGNAL';
@@ -60,11 +66,12 @@ function getSyncPhaseLabel(remainingSec: number, procedure: string): string {
     return 'ET-MINUT SIGNAL';
   }
 }
-
 function getSyncPhaseColor(remainingSec: number, procedure: string, isPostStart: boolean): string {
   if (isPostStart) return '#059669'; // emerald-600
   if (remainingSec <= 0) return '#10b981'; // emerald-500
-  if (procedure === 'standard') {
+  if (procedure === 'one_minute') {
+    return '#ef4444'; // always red (1 minute warning)
+  } else if (procedure === 'standard') {
     if (remainingSec > 300) return '#e8380d'; // warning red
     if (remainingSec > 240) return '#f59e0b'; // amber
     if (remainingSec > 60)  return '#f97316'; // orange
