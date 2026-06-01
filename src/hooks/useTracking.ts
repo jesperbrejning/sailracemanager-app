@@ -43,6 +43,7 @@ import {
   getActiveSession,
   getPendingBatches,
   removePendingBatches,
+  getPendingPointCount,
 } from '../services/offlineStorage';
 import { haversineDistance } from '../utils/geo';
 import type { TrackingPoint, TrackingState } from '../types/tracking';
@@ -390,14 +391,58 @@ export function useTracking() {
       heelUpdateTimerRef.current = null;
     }
 
-    // Stop heel correction sensor
+        // Stop heel correction sensor
     stopHeelSensor();
-
-    // Stop background tracking (flushes remaining points)
+    // Stop background tracking (flushes remaining points into pendingBatches)
     await stopBackgroundTracking();
 
-    // Sync any remaining offline batches
-    await syncPendingBatches();
+    // Drain all pending batches - retry until empty or timeout (30s)
+    // This ensures no GPS points are lost when the user stops tracking
+    const drainStartTime = Date.now();
+    const DRAIN_TIMEOUT_MS = 30_000;
+    const currentSessionId = sessionIdRef.current;
+    if (currentSessionId) {
+      let attempts = 0;
+      while (Date.now() - drainStartTime < DRAIN_TIMEOUT_MS) {
+        const batches = await getPendingBatches();
+        if (batches.length === 0) break;
+        attempts++;
+        let synced = 0;
+        // Release the flush guard so we can send
+        isFlushingRef.current = false;
+        for (const batch of batches) {
+          try {
+            isFlushingRef.current = true;
+            const result = await sendPointsMutation.mutateAsync({
+              sessionId: batch.sessionId,
+              points: batch.points,
+            });
+            sentCountRef.current = result.totalPoints;
+            setState((prev) => ({ ...prev, pointsSent: result.totalPoints }));
+            synced++;
+          } catch (err) {
+            console.warn(`[Tracking] Drain attempt ${attempts} failed:`, err);
+            // Wait 2s before retrying
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            break;
+          } finally {
+            isFlushingRef.current = false;
+          }
+        }
+        if (synced > 0) {
+          await removePendingBatches(synced);
+        }
+        if (synced < batches.length) {
+          // Some failed - wait before retry
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+      const remaining = await getPendingPointCount();
+      if (remaining > 0) {
+        console.warn(`[Tracking] ${remaining} points could not be sent - saved to disk for next session`);
+        // Points remain in AsyncStorage and will be sent on next app start
+      }
+    }
 
     // Stop session on backend
     let stats = null;
@@ -501,6 +546,8 @@ export function useTracking() {
     // Session was saved but tracking stopped (app was killed)
     // Clean up the orphaned session
     await clearActiveSession();
+    // But try to send any pending points that were saved to disk
+    await syncPendingBatches();
     return false;
   }, [sendPointsToServer, handleLocationUpdate, syncPendingBatches]);
 

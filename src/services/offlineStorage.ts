@@ -1,16 +1,20 @@
 /**
  * Offline Storage Service
  *
- * Minimal persistence: only saves the active session metadata for
- * crash/restart recovery. GPS points are NOT stored on disk - they
- * are sent directly to the server. If the server is unreachable,
- * points are held in a small in-memory buffer only (no disk writes).
+ * Persists unsent GPS point batches to AsyncStorage (disk) so they survive
+ * app restarts, crashes, and forced stops. Also saves active session metadata
+ * for crash/restart recovery.
+ *
+ * Strategy:
+ * - GPS point batches are stored in AsyncStorage under PENDING_POINTS key
+ * - Max 2000 points total (oldest dropped when limit exceeded)
+ * - Session metadata stored separately under ACTIVE_SESSION key
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import type { TrackingPoint } from '../types/tracking';
 
-// ─── In-memory offline buffer (replaces disk-based pending batches) ──────────
+// ─── Pending batch persistence ────────────────────────────────────────────────
 
 interface PendingBatch {
   sessionId: number;
@@ -18,46 +22,73 @@ interface PendingBatch {
   createdAt: number;
 }
 
-/** Maximum number of points to hold in memory when offline */
-const MAX_OFFLINE_POINTS = 500;
+/** Maximum number of points to persist when offline */
+const MAX_OFFLINE_POINTS = 2000;
 
-let memoryBatches: PendingBatch[] = [];
-
-/** Add a batch of points to the in-memory offline queue */
+/** Add a batch of points to the persistent offline queue (disk) */
 export async function addPendingBatch(
   sessionId: number,
   points: TrackingPoint[]
 ): Promise<void> {
-  const totalBuffered = memoryBatches.reduce((sum, b) => sum + b.points.length, 0);
+  try {
+    const existing = await getPendingBatches();
+    let totalBuffered = existing.reduce((sum, b) => sum + b.points.length, 0);
 
-  if (totalBuffered + points.length > MAX_OFFLINE_POINTS) {
-    // Drop oldest batch to make room (prefer keeping newest data)
-    if (memoryBatches.length > 0) {
-      memoryBatches.shift();
+    let batches = [...existing];
+
+    // Drop oldest batches to make room if needed
+    while (batches.length > 0 && totalBuffered + points.length > MAX_OFFLINE_POINTS) {
+      const dropped = batches.shift();
+      totalBuffered -= dropped?.points.length ?? 0;
     }
-  }
 
-  memoryBatches.push({ sessionId, points, createdAt: Date.now() });
+    batches.push({ sessionId, points, createdAt: Date.now() });
+    await AsyncStorage.setItem(
+      CONFIG.STORAGE_KEYS.PENDING_POINTS,
+      JSON.stringify(batches)
+    );
+  } catch (err) {
+    console.warn('[OfflineStorage] Failed to save pending batch:', err);
+  }
 }
 
-/** Get all pending (unsent) GPS point batches from memory */
+/** Get all pending (unsent) GPS point batches from disk */
 export async function getPendingBatches(): Promise<PendingBatch[]> {
-  return [...memoryBatches];
+  try {
+    const data = await AsyncStorage.getItem(CONFIG.STORAGE_KEYS.PENDING_POINTS);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Remove the first N batches (after successful sync) */
 export async function removePendingBatches(count: number): Promise<void> {
-  memoryBatches = memoryBatches.slice(count);
+  try {
+    const existing = await getPendingBatches();
+    const remaining = existing.slice(count);
+    await AsyncStorage.setItem(
+      CONFIG.STORAGE_KEYS.PENDING_POINTS,
+      JSON.stringify(remaining)
+    );
+  } catch (err) {
+    console.warn('[OfflineStorage] Failed to remove pending batches:', err);
+  }
 }
 
 /** Clear all pending batches */
 export async function clearPendingBatches(): Promise<void> {
-  memoryBatches = [];
+  try {
+    await AsyncStorage.removeItem(CONFIG.STORAGE_KEYS.PENDING_POINTS);
+  } catch (err) {
+    console.warn('[OfflineStorage] Failed to clear pending batches:', err);
+  }
 }
 
 /** Get the count of pending points across all batches */
 export async function getPendingPointCount(): Promise<number> {
-  return memoryBatches.reduce((sum, batch) => sum + batch.points.length, 0);
+  const batches = await getPendingBatches();
+  return batches.reduce((sum, batch) => sum + batch.points.length, 0);
 }
 
 // ─── Session recovery (AsyncStorage - small metadata only) ───────────────────
@@ -93,6 +124,4 @@ export async function getActiveSession(): Promise<{
 /** Clear active session data */
 export async function clearActiveSession(): Promise<void> {
   await AsyncStorage.removeItem(CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
-  // Also clear any leftover pending points key from old versions
-  await AsyncStorage.removeItem(CONFIG.STORAGE_KEYS.PENDING_POINTS);
 }
