@@ -131,9 +131,28 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
 
 /**
  * Flush the point buffer to the server or offline storage.
+ * 
+ * NOTE: In background context, activeSessionId may have been set by the
+ * task handler above (read from AsyncStorage). The network call may still
+ * fail if Doze mode is active and the app is NOT exempt from battery
+ * optimization. In that case, points are saved to offline storage and
+ * will be synced when the app returns to foreground.
  */
 async function flushBuffer(): Promise<void> {
-  if (pointBuffer.length === 0 || !activeSessionId) return;
+  if (pointBuffer.length === 0 || !activeSessionId) {
+    // Last resort: try reading from AsyncStorage if activeSessionId is null
+    if (pointBuffer.length > 0 && !activeSessionId) {
+      try {
+        const saved = await getActiveSession();
+        if (saved?.sessionId) {
+          activeSessionId = saved.sessionId;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (!activeSessionId) return;
+  }
   const sessionId = activeSessionId;
   const points = [...pointBuffer];
   pointBuffer = [];

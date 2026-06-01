@@ -46,6 +46,7 @@ import {
   getPendingPointCount,
 } from '../services/offlineStorage';
 import { haversineDistance } from '../utils/geo';
+import { ensureBatteryOptimizationForTracking } from '../services/batteryOptimization';
 import type { TrackingPoint, TrackingState } from '../types/tracking';
 
 const BATCH_FLUSH_INTERVAL_MS = CONFIG.GPS.BATCH_INTERVAL_MS;
@@ -259,6 +260,10 @@ export function useTracking() {
       }));
 
       try {
+        // Ensure battery optimization is disabled (Android Doze mode)
+        // This must be done BEFORE starting tracking so network stays available
+        await ensureBatteryOptimizationForTracking();
+
         // Request permissions
         const permissions = await requestLocationPermissions();
         if (!permissions.foreground) {
