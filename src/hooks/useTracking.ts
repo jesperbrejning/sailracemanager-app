@@ -83,6 +83,7 @@ export function useTracking() {
   const heelUpdateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const allPointsRef = useRef<TrackingPoint[]>([]);
   const isTrackingRef = useRef<boolean>(false);
+  const isFlushingRef = useRef<boolean>(false); // Guard against concurrent flush calls
 
   // tRPC mutations
   const startMutation = trpc.tracking.start.useMutation();
@@ -91,15 +92,22 @@ export function useTracking() {
 
   /**
    * Send a batch of points to the backend via tRPC.
+   * Protected by isFlushingRef to prevent concurrent overlapping calls.
    */
   const sendPointsToServer = useCallback(
     async (sessionId: number, points: TrackingPoint[]): Promise<void> => {
-      const result = await sendPointsMutation.mutateAsync({
-        sessionId,
-        points,
-      });
-      sentCountRef.current = result.totalPoints;
-      setState((prev) => ({ ...prev, pointsSent: result.totalPoints }));
+      if (isFlushingRef.current) return; // Skip if already sending
+      isFlushingRef.current = true;
+      try {
+        const result = await sendPointsMutation.mutateAsync({
+          sessionId,
+          points,
+        });
+        sentCountRef.current = result.totalPoints;
+        setState((prev) => ({ ...prev, pointsSent: result.totalPoints }));
+      } finally {
+        isFlushingRef.current = false;
+      }
     },
     [sendPointsMutation]
   );
@@ -188,20 +196,26 @@ export function useTracking() {
    * Sync any pending offline batches to the server.
    */
   const syncPendingBatches = useCallback(async () => {
+    if (isFlushingRef.current) return; // Skip if already sending
     const batches = await getPendingBatches();
     if (batches.length === 0) return;
 
+    isFlushingRef.current = true;
     let synced = 0;
-    for (const batch of batches) {
-      try {
-        await sendPointsMutation.mutateAsync({
-          sessionId: batch.sessionId,
-          points: batch.points,
-        });
-        synced++;
-      } catch {
-        break; // Stop trying if one fails (likely offline)
+    try {
+      for (const batch of batches) {
+        try {
+          await sendPointsMutation.mutateAsync({
+            sessionId: batch.sessionId,
+            points: batch.points,
+          });
+          synced++;
+        } catch {
+          break; // Stop trying if one fails (likely offline)
+        }
       }
+    } finally {
+      isFlushingRef.current = false;
     }
 
     if (synced > 0) {

@@ -6,9 +6,15 @@
  * 
  * Features:
  * - Live position marker with accuracy circle
- * - Track polyline showing sailed route
+ * - Track polyline showing sailed route (incremental append - no full resend)
  * - Auto-center on current position
  * - Nautical-friendly styling
+ * 
+ * Performance notes:
+ * - Track points are appended one at a time (trackAppend) instead of
+ *   resending all points every second. This prevents JS thread blocking
+ *   with large track arrays.
+ * - On mount/reconnect, the full track is sent once as 'trackInit'.
  */
 
 import React, { useRef, useCallback, useEffect, useMemo } from 'react';
@@ -78,6 +84,7 @@ function generateMapHtml(initialLat: number, initialLng: number): string {
     });
     var posMarker = null;
     var accuracyCircle = null;
+    var trackCoords = [];
     var trackLine = null;
     var shouldFollow = true;
 
@@ -112,17 +119,32 @@ function generateMapHtml(initialLat: number, initialLng: number): string {
       }
     }
 
-    // Update track polyline
-    function updateTrack(coords) {
-      if (trackLine) {
-        map.removeLayer(trackLine);
-      }
-      if (coords.length > 1) {
-        trackLine = L.polyline(coords, {
+    // Initialise track with full coords array (called once on mount)
+    function initTrack(coords) {
+      trackCoords = coords;
+      if (trackLine) { map.removeLayer(trackLine); trackLine = null; }
+      if (trackCoords.length > 1) {
+        trackLine = L.polyline(trackCoords, {
           color: '#e85d2a',
           weight: 3,
           opacity: 0.8
         }).addTo(map);
+      }
+    }
+
+    // Append a single new point to the polyline (fast - no full rebuild)
+    function appendTrackPoint(lat, lng) {
+      trackCoords.push([lat, lng]);
+      if (trackCoords.length > 1) {
+        if (!trackLine) {
+          trackLine = L.polyline(trackCoords, {
+            color: '#e85d2a',
+            weight: 3,
+            opacity: 0.8
+          }).addTo(map);
+        } else {
+          trackLine.addLatLng([lat, lng]);
+        }
       }
     }
 
@@ -134,33 +156,25 @@ function generateMapHtml(initialLat: number, initialLng: number): string {
       }
     }
 
-    // Listen for messages from React Native
-    window.addEventListener('message', function(event) {
+    // Message handler
+    function handleMessage(data) {
       try {
-        var msg = JSON.parse(event.data);
+        var msg = JSON.parse(data);
         if (msg.type === 'position') {
           updatePosition(msg.lat, msg.lng, msg.accuracy);
-        } else if (msg.type === 'track') {
-          updateTrack(msg.coords);
+        } else if (msg.type === 'trackInit') {
+          initTrack(msg.coords);
+        } else if (msg.type === 'trackAppend') {
+          appendTrackPoint(msg.lat, msg.lng);
         } else if (msg.type === 'center') {
           centerOnPosition();
         }
       } catch(e) {}
-    });
+    }
 
-    // Also handle ReactNativeWebView messages
-    document.addEventListener('message', function(event) {
-      try {
-        var msg = JSON.parse(event.data);
-        if (msg.type === 'position') {
-          updatePosition(msg.lat, msg.lng, msg.accuracy);
-        } else if (msg.type === 'track') {
-          updateTrack(msg.coords);
-        } else if (msg.type === 'center') {
-          centerOnPosition();
-        }
-      } catch(e) {}
-    });
+    // Listen for messages from React Native
+    window.addEventListener('message', function(event) { handleMessage(event.data); });
+    document.addEventListener('message', function(event) { handleMessage(event.data); });
   </script>
 </body>
 </html>
@@ -174,6 +188,8 @@ export default function WebViewMap({
   style,
 }: WebViewMapProps) {
   const webViewRef = useRef<WebView>(null);
+  const webViewReadyRef = useRef(false);
+  const lastSentLengthRef = useRef(0);
 
   // Initial center: current position or Denmark
   const initialLat = currentPosition?.latitude ?? 55.6761;
@@ -184,9 +200,19 @@ export default function WebViewMap({
     [] // Only generate once
   );
 
+  // When WebView finishes loading, send the current full track once
+  const handleLoad = useCallback(() => {
+    webViewReadyRef.current = true;
+    if (trackPoints.length > 0 && webViewRef.current) {
+      const coords = trackPoints.map((p) => [p.latitude, p.longitude]);
+      webViewRef.current.postMessage(JSON.stringify({ type: 'trackInit', coords }));
+      lastSentLengthRef.current = trackPoints.length;
+    }
+  }, [trackPoints]);
+
   // Send position updates to WebView
   useEffect(() => {
-    if (currentPosition && webViewRef.current) {
+    if (currentPosition && webViewRef.current && webViewReadyRef.current) {
       const msg = JSON.stringify({
         type: 'position',
         lat: currentPosition.latitude,
@@ -197,13 +223,20 @@ export default function WebViewMap({
     }
   }, [currentPosition?.latitude, currentPosition?.longitude, accuracy]);
 
-  // Send track updates to WebView
+  // Append only NEW track points to WebView (never resend all points)
   useEffect(() => {
-    if (trackPoints.length > 0 && webViewRef.current) {
-      const coords = trackPoints.map((p) => [p.latitude, p.longitude]);
-      const msg = JSON.stringify({ type: 'track', coords });
-      webViewRef.current.postMessage(msg);
+    if (!webViewRef.current || !webViewReadyRef.current) return;
+    const newCount = trackPoints.length;
+    const lastSent = lastSentLengthRef.current;
+    if (newCount <= lastSent) return;
+    // Send each new point as an append message
+    for (let i = lastSent; i < newCount; i++) {
+      const p = trackPoints[i];
+      webViewRef.current.postMessage(
+        JSON.stringify({ type: 'trackAppend', lat: p.latitude, lng: p.longitude })
+      );
     }
+    lastSentLengthRef.current = newCount;
   }, [trackPoints.length]);
 
   const centerOnPosition = useCallback(() => {
@@ -225,6 +258,7 @@ export default function WebViewMap({
         overScrollMode="never"
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
+        onLoad={handleLoad}
       />
     </View>
   );

@@ -17,7 +17,7 @@
  * - Stops GPS when timerEndedAt is set
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -109,16 +109,6 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
   React.useEffect(() => {
     recoverSession();
   }, []);
-
-  // Build polyline coordinates from track points
-  const polylineCoords = useMemo(
-    () =>
-      trackPoints.map((p) => ({
-        latitude: p.latitude,
-        longitude: p.longitude,
-      })),
-    [trackPoints]
-  );
 
   const handleStart = useCallback(async () => {
     await startTracking({ eventId });
@@ -257,7 +247,7 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
           <WebViewMap
             currentPosition={currentPosition}
             accuracy={accuracy}
-            trackPoints={polylineCoords}
+            trackPoints={trackPoints}
             style={styles.map}
           />
         </View>
