@@ -4,7 +4,7 @@
  * The main tracking interface showing:
  * - Synchronized Race Timer (same as browser LiveTracking.tsx)
  * - Auto start/stop tracking when race-officer starts/stops the timer
- * - Live map with GPS trail (WebView + Leaflet/OpenStreetMap)
+ * - Live GPS stats (speed, distance, heading)
  * - Speed gauge (knots)
  * - Distance traveled
  * - Duration timer
@@ -32,7 +32,7 @@ import { useTracking } from '../hooks/useTracking';
 import { useAutoTracking } from '../hooks/useAutoTracking';
 import { useAuth } from '../hooks/useAuth';
 import { formatDuration, formatSpeed, formatDistance } from '../utils/geo';
-import WebViewMap from '../components/WebViewMap';
+// Map removed to reduce app size
 import SyncedRaceTimer from '../components/SyncedRaceTimer';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
@@ -242,15 +242,7 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
           </View>
         )}
 
-        {/* Map - WebView with Leaflet/OpenStreetMap */}
-        <View style={styles.mapContainer}>
-          <WebViewMap
-            currentPosition={currentPosition}
-            accuracy={accuracy}
-            trackPoints={trackPoints}
-            style={styles.map}
-          />
-        </View>
+
 
         {/* Stats Dashboard */}
         <View style={styles.dashboard}>
@@ -553,18 +545,7 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     lineHeight: 16,
   },
-  mapContainer: {
-    height: 220,
-    marginHorizontal: 16,
-    marginVertical: 8,
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1e3d66',
-  },
-  map: {
-    flex: 1,
-  },
+
   dashboard: {
     paddingHorizontal: 16,
     paddingBottom: 24,
