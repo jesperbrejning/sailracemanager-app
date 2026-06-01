@@ -153,9 +153,14 @@ export function useTracking() {
     lastPositionRef.current = point;
     pointCountRef.current += 1;
 
-    // Update track points array
-    allPointsRef.current = [...allPointsRef.current, point];
-    setTrackPoints(allPointsRef.current);
+    // Update track points array - use ring buffer to prevent memory leak
+    // Only keep the last MAX_TRACK_POINTS_IN_MEMORY points in memory for map display
+    const MAX_POINTS = CONFIG.GPS.MAX_TRACK_POINTS_IN_MEMORY;
+    const newPoints = allPointsRef.current.length >= MAX_POINTS
+      ? [...allPointsRef.current.slice(-MAX_POINTS + 1), point]
+      : [...allPointsRef.current, point];
+    allPointsRef.current = newPoints;
+    setTrackPoints(newPoints);
 
     setState((prev) => ({
       ...prev,

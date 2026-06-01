@@ -292,7 +292,7 @@ export async function startBackgroundTracking(
     // Foreground-only fallback using watchPositionAsync
     console.log('[BackgroundTracking] Background denied, using foreground-only tracking');
     
-    await Location.watchPositionAsync(
+      await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.BestForNavigation,
         timeInterval: CONFIG.GPS.MIN_UPDATE_INTERVAL_MS,

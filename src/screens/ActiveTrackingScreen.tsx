@@ -18,7 +18,6 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
-import { MagDebugLogger } from '../services/magDebugLogger';
 import {
   View,
   Text,
@@ -430,36 +429,7 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
             </TouchableOpacity>
           )}
 
-          {/* Magnetometer Debug Tools */}
-          <View style={styles.debugRow}>
-            <TouchableOpacity
-              style={[styles.debugButton, MagDebugLogger.isActive && styles.debugButtonActive]}
-              onPress={() => {
-                if (MagDebugLogger.isActive) {
-                  const rows = MagDebugLogger.rowCount;
-                  void MagDebugLogger.stop().then(() => {
-                    Alert.alert('Debug Log', `Logging stoppet.\n${rows} rækker gemt.\nTryk 'Send log' for at sende filen.`);
-                  });
-                } else {
-                  void MagDebugLogger.start().then(() => {
-                    Alert.alert('Debug Log', 'Magnetometer logging startet!\n\nDrej telefonen LANGSOMT 360° (tag 30-60 sek).\nTryk derefter \'Stop mag-log\'.');
-                  });
-                }
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.debugButtonText}>
-                {MagDebugLogger.isActive ? '⏹ Stop mag-log' : '📝 Start mag-log'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={() => void MagDebugLogger.share()}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.debugButtonText}>📤 Send log</Text>
-            </TouchableOpacity>
-          </View>
+
         </View>
       </ScrollView>
 
@@ -849,28 +819,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#e85d2a',
   },
-  debugRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  debugButton: {
-    flex: 1,
-    backgroundColor: '#162d4d',
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1e3d66',
-  },
-  debugButtonActive: {
-    borderColor: '#e85d2a',
-    backgroundColor: '#2d1a0e',
-  },
-  debugButtonText: {
-    fontSize: 12,
-    color: '#94a3b8',
-  },
+
   statsOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.85)',

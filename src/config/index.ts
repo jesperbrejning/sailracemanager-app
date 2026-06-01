@@ -22,6 +22,8 @@ export const CONFIG = {
     MIN_UPDATE_INTERVAL_MS: 1000,
     /** Maximum points per batch send */
     MAX_BATCH_SIZE: 100,
+    /** Maximum points to keep in memory for map display (ring buffer) */
+    MAX_TRACK_POINTS_IN_MEMORY: 500,
     /** Minimum accuracy to accept a GPS point (meters) */
     MAX_ACCURACY_METERS: 200,
     /** Maximum segment distance to count (meters) - filter GPS jumps */

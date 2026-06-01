@@ -22,7 +22,6 @@
 
 import { DeviceMotion, Magnetometer, Gyroscope } from 'expo-sensors';
 import type { DeviceMotionMeasurement, MagnetometerMeasurement } from 'expo-sensors';
-import { MagDebugLogger } from './magDebugLogger';
 import {
   updateMadgwick,
   getMadgwickHeel,
@@ -294,9 +293,7 @@ function computeTiltCompensatedHDG(): void {
   // Nautical convention: 0° displayed as 360°
   if (hdgDeg < 0.5) hdgDeg = 360;
 
-  // Log every reading to debug file (if logging is active)
-  // Also log to console every ~5 sec
-  void MagDebugLogger.log(magX, magY, magZ, currentHeelAngle, currentPitchAngle, Xh, Yh, hdgDeg);
+  // Log to console every ~5 sec (10% sample rate)
   if (Math.random() < 0.1) {
     console.log(
       `[HDG] mag=(${magX.toFixed(1)},${magY.toFixed(1)},${magZ.toFixed(1)})` +
