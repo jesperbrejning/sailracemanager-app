@@ -19,7 +19,7 @@ export const CONFIG = {
     /** How often to send batched points to server (ms) */
     BATCH_INTERVAL_MS: 10000,
     /** Minimum time between GPS readings (ms) */
-    MIN_UPDATE_INTERVAL_MS: 1000,
+    MIN_UPDATE_INTERVAL_MS: 500,
     /** Maximum points per batch send */
     MAX_BATCH_SIZE: 200,
     /** Maximum points to keep in memory for map display (ring buffer) */
