@@ -17,11 +17,11 @@ export const CONFIG = {
   // GPS Tracking
   GPS: {
     /** How often to send batched points to server (ms) */
-    BATCH_INTERVAL_MS: 5000,
+    BATCH_INTERVAL_MS: 10000,
     /** Minimum time between GPS readings (ms) */
     MIN_UPDATE_INTERVAL_MS: 1000,
     /** Maximum points per batch send */
-    MAX_BATCH_SIZE: 100,
+    MAX_BATCH_SIZE: 200,
     /** Maximum points to keep in memory for map display (ring buffer) */
     MAX_TRACK_POINTS_IN_MEMORY: 500,
     /** Minimum accuracy to accept a GPS point (meters) */
