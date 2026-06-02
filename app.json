@@ -14,13 +14,21 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sailracemanager.app",
+      "buildNumber": "1",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "SailRaceManager needs your location to track your sailing route during races.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "SailRaceManager needs background location access to keep tracking your sailing route even when the screen is off.",
+        "NSLocationAlwaysUsageDescription": "SailRaceManager needs background location access to keep tracking your sailing route even when the screen is off.",
+        "NSMotionUsageDescription": "SailRaceManager uses motion sensors to measure boat heel angle and heading.",
+        "NSBluetoothAlwaysUsageDescription": "SailRaceManager may use Bluetooth for connecting to sailing instruments.",
         "UIBackgroundModes": [
           "location",
-          "fetch"
+          "fetch",
+          "remote-notification"
         ]
+      },
+      "config": {
+        "usesNonExemptEncryption": false
       }
     },
     "android": {
@@ -54,8 +62,19 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0a1628",
+          "sounds": []
+        }
+      ],
       "expo-secure-store",
-      "expo-ignore-battery-optimizations"
+      [
+        "expo-ignore-battery-optimizations",
+        {}
+      ]
     ],
     "extra": {
       "eas": {

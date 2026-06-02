@@ -103,7 +103,7 @@ export default function ProfileScreen() {
             <Text style={styles.aboutText}>
               SailRaceManager GPS Tracking App enables reliable background GPS
               tracking during sailing races. Your route is recorded even when
-              the screen is off, using Android's Foreground Service.
+              the screen is off.
             </Text>
             <Text style={styles.aboutText}>
               All tracking data is synced to your SailRaceManager account and
