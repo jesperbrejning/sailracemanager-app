@@ -21,10 +21,8 @@ import { CONFIG } from '../config';
 import { addPendingBatch, getActiveSession } from './offlineStorage';
 import { sendPointsDirect } from './directSender';
 import {
-  correctPositionForHeel,
   getHeelAngle,
   getPitchAngle,
-  filterSpeedForHeel,
   kalmanGpsUpdate,
   getKalmanSpeedMs,
 } from './heelCorrection';
@@ -59,30 +57,17 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
   const { locations } = data as { locations: Location.LocationObject[] };
 
   for (const location of locations) {
-    // Apply heel correction to GPS position
-    const heelCorrected = correctPositionForHeel(
-      location.coords.latitude,
-      location.coords.longitude,
-      location.coords.heading
-    );
-
-    // Feed GPS speed into Kalman filter for fused speed estimate
+    // Feed GPS speed into median filter
     const rawSpeed = location.coords.speed ?? undefined;
     let fusedSpeed: number | undefined;
     if (rawSpeed != null && rawSpeed >= 0) {
       kalmanGpsUpdate(rawSpeed);
       fusedSpeed = parseFloat(getKalmanSpeedMs().toFixed(3));
-    } else {
-      // Fallback legacy filter
-      if (rawSpeed != null) {
-        lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
-        fusedSpeed = lastFilteredSpeed;
-      }
     }
 
     const point: TrackingPoint = {
-      latitude: heelCorrected.latitude,
-      longitude: heelCorrected.longitude,
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
       accuracy: location.coords.accuracy ?? undefined,
       altitude: location.coords.altitude ?? undefined,
       altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
@@ -91,7 +76,7 @@ TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
       timestamp: location.timestamp,
       heelAngle: parseFloat(getHeelAngle().toFixed(1)),
       pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
-      heelCorrected: heelCorrected.correctionApplied,
+      heelCorrected: false,
     };
 
     // Skip duplicate timestamps
@@ -336,31 +321,26 @@ export async function startBackgroundTracking(
         distanceInterval: 0,
       },
       (location) => {
-        // Apply heel correction to GPS position
-        const heelCorrected = correctPositionForHeel(
-          location.coords.latitude,
-          location.coords.longitude,
-          location.coords.heading
-        );
-
-        // Apply speed filtering for heel-induced noise
+        // Feed GPS speed into median filter
         const rawSpeed = location.coords.speed ?? undefined;
-        if (rawSpeed != null) {
-          lastFilteredSpeed = filterSpeedForHeel(rawSpeed, lastFilteredSpeed);
+        let fusedSpeed: number | undefined;
+        if (rawSpeed != null && rawSpeed >= 0) {
+          kalmanGpsUpdate(rawSpeed);
+          fusedSpeed = parseFloat(getKalmanSpeedMs().toFixed(3));
         }
 
         const point: TrackingPoint = {
-          latitude: heelCorrected.latitude,
-          longitude: heelCorrected.longitude,
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
           accuracy: location.coords.accuracy ?? undefined,
           altitude: location.coords.altitude ?? undefined,
           altitudeAccuracy: location.coords.altitudeAccuracy ?? undefined,
-          speed: rawSpeed != null ? lastFilteredSpeed : undefined,
+          speed: fusedSpeed,
           heading: location.coords.heading ?? undefined,
           timestamp: location.timestamp,
           heelAngle: parseFloat(getHeelAngle().toFixed(1)),
           pitchAngle: parseFloat(getPitchAngle().toFixed(1)),
-          heelCorrected: heelCorrected.correctionApplied,
+          heelCorrected: false,
         };
 
         if (Math.abs(point.timestamp - lastTimestamp) < 100) return;
