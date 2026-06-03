@@ -1,33 +1,18 @@
 /**
  * 1D Kalman Filter for Speed Over Ground (SOG) Fusion
  *
- * Fuses GPS speed (accurate but slow, 1 Hz) with IMU forward acceleration
+ * Fuses GPS speed (accurate, 1-2 Hz) with IMU forward acceleration
  * (fast but drifts, 10-100 Hz) to produce a smooth, responsive speed estimate.
  *
- * This is the same principle used in Vakaros Atlas to give "instant" speed
- * response to wind gusts and manoeuvres, even though the GPS only updates
- * once per second.
- *
- * HOW IT WORKS:
- *   1. PREDICT: Use IMU forward acceleration to predict new speed
- *      speed_predicted = speed_prev + accel_forward * dt
- *      uncertainty grows with each prediction step
- *
- *   2. UPDATE: When a GPS speed arrives, fuse it with the prediction
- *      Kalman gain = uncertainty / (uncertainty + GPS_noise)
- *      speed_fused = speed_predicted + gain * (gps_speed - speed_predicted)
- *      uncertainty shrinks after GPS update
- *
- * RESULT:
- *   - Between GPS updates: speed follows IMU acceleration (instant response)
- *   - At GPS updates: speed is corrected towards GPS measurement
- *   - Smooth output without the 1-second "staircase" effect of raw GPS speed
- *
- * MOUNTING NOTE:
- *   Phone is mounted on mast, display facing aft. The "forward" acceleration
- *   axis depends on the phone orientation. For mast-mounted portrait (Y up):
- *   - Forward/aft acceleration is along the Z axis (fore/aft)
- *   - We use accelerometer Z component, corrected for pitch angle
+ * IMPORTANT TUNING NOTES (after field testing 2026-06):
+ *   - IMU-based prediction is only used as a gentle smoothing aid, NOT as the
+ *     primary speed source. The GPS speed is the ground truth.
+ *   - R_GPS_NOISE is intentionally high (trust GPS less aggressively) to prevent
+ *     the filter from over-correcting on noisy GPS spikes.
+ *   - Q_PROCESS_NOISE is low to prevent IMU drift from inflating speed.
+ *   - A hard cap of MAX_SPEED_MS (30 knots) prevents runaway estimates.
+ *   - GPS outlier rejection: if a GPS reading jumps >5 kn from the previous,
+ *     it is discarded (likely a GPS glitch).
  *
  * UNIT: All speeds in m/s, accelerations in m/s²
  */
@@ -43,7 +28,7 @@ let P = 1.0;
 /** Timestamp of last prediction step (ms) */
 let lastPredictTime = 0;
 
-/** Last GPS speed used for update (m/s) */
+/** Last GPS speed accepted by the filter (m/s) — used for outlier rejection */
 let lastGpsSpeed = 0.0;
 
 /** Whether the filter has received at least one GPS update */
@@ -53,31 +38,40 @@ let hasGpsUpdate = false;
 
 /**
  * Process noise variance (Q): how much we trust the IMU acceleration.
- * Higher Q = trust IMU more, faster response but noisier.
- * Lower Q = trust IMU less, smoother but slower.
- *
- * Tuned for sailing: boats accelerate/decelerate slowly (0.1-0.5 m/s²),
- * but we want to catch wind gusts quickly.
- * Q = 0.01 m²/s² per second = ~0.1 m/s uncertainty after 1 second
+ * Reduced from 0.01 to 0.005 — boats accelerate slowly, IMU should only
+ * provide gentle smoothing between GPS updates, not drive the estimate.
  */
-const Q_PROCESS_NOISE = 0.01;
+const Q_PROCESS_NOISE = 0.005;
 
 /**
  * Measurement noise variance (R): how much we trust the GPS speed.
- * Higher R = trust GPS less, smoother but slower to correct.
- * Lower R = trust GPS more, faster correction but noisier.
- *
- * Typical phone GPS speed accuracy: ±0.1-0.3 m/s (±0.2-0.6 knots)
- * R = 0.04 m²/s² corresponds to ±0.2 m/s (±0.4 knots) GPS noise
+ * Increased from 0.04 to 0.09 — phone GPS speed accuracy is typically
+ * ±0.2-0.5 m/s (±0.4-1.0 knots). Being more conservative prevents the
+ * filter from chasing GPS noise spikes.
+ * R = 0.09 m²/s² corresponds to ±0.3 m/s (±0.6 knots) GPS noise.
  */
-const R_GPS_NOISE = 0.04;
+const R_GPS_NOISE = 0.09;
 
 /**
  * Accelerometer noise variance: uncertainty in IMU forward acceleration.
- * Accounts for sensor noise, vibration, and mounting imperfections.
- * R_accel = 0.1 m²/s⁴ corresponds to ±0.32 m/s² accelerometer noise
+ * Increased from 0.1 to 0.25 — phone accelerometers on a boat are very
+ * noisy due to wave motion, vibration, and non-ideal mounting.
  */
-const R_ACCEL_NOISE = 0.1;
+const R_ACCEL_NOISE = 0.25;
+
+/**
+ * Maximum plausible boat speed: 30 knots = 15.43 m/s.
+ * Hard cap to prevent runaway Kalman estimates.
+ */
+const MAX_SPEED_MS = 15.43; // 30 knots
+
+/**
+ * GPS outlier rejection threshold: 5 knots = 2.57 m/s.
+ * If a GPS reading jumps more than this from the previous accepted reading,
+ * it is treated as a GPS glitch and discarded.
+ * Only applied after the first GPS update.
+ */
+const GPS_OUTLIER_THRESHOLD_MS = 2.57; // 5 knots jump
 
 // ─── Coordinate System ────────────────────────────────────────────────────────
 
@@ -115,6 +109,10 @@ export function kalmanPredict(
     return;
   }
 
+  // Only apply IMU prediction if we already have a GPS baseline.
+  // Before first GPS update, don't let IMU drive the estimate.
+  if (!hasGpsUpdate) return;
+
   // Extract forward acceleration:
   // For mast-mounted phone (Y up, Z fore/aft):
   //   Forward accel = accelZ * cos(pitch) - gravity_component
@@ -124,14 +122,15 @@ export function kalmanPredict(
   const gravityComponent = 9.81 * Math.sin(pitchRad);
   const forwardAccel = accelZ - gravityComponent;
 
-  // Clamp to realistic boat acceleration range (±2 m/s²)
-  const clampedAccel = Math.max(-2.0, Math.min(2.0, forwardAccel));
+  // Clamp to realistic boat acceleration range (±1 m/s² — conservative)
+  const clampedAccel = Math.max(-1.0, Math.min(1.0, forwardAccel));
 
   // Predict new speed
   speedEstimate = speedEstimate + clampedAccel * dt;
 
   // Speed cannot be negative (boat doesn't sail backwards in normal racing)
-  speedEstimate = Math.max(0.0, speedEstimate);
+  // and cannot exceed the hard cap
+  speedEstimate = Math.max(0.0, Math.min(MAX_SPEED_MS, speedEstimate));
 
   // Grow uncertainty with time and process noise
   P = P + Q_PROCESS_NOISE * dt + R_ACCEL_NOISE * dt * dt;
@@ -140,12 +139,30 @@ export function kalmanPredict(
 /**
  * UPDATE step: correct the speed estimate with a GPS measurement.
  *
- * Called at low frequency (1 Hz) when a new GPS speed arrives.
+ * Called at low frequency (1-2 Hz) when a new GPS speed arrives.
+ * Includes outlier rejection to discard GPS glitches.
  *
  * @param gpsSpeed - GPS speed in m/s (from location.coords.speed)
  */
 export function kalmanUpdate(gpsSpeed: number): void {
   if (gpsSpeed < 0) return; // Invalid GPS speed
+
+  // Hard cap: reject GPS readings above max plausible speed
+  if (gpsSpeed > MAX_SPEED_MS) {
+    console.warn(`[KalmanSpeed] GPS speed ${(gpsSpeed * 1.94384).toFixed(1)} kn exceeds cap, discarding`);
+    return;
+  }
+
+  // Outlier rejection: skip GPS readings that jump too far from last accepted value
+  if (hasGpsUpdate) {
+    const jump = Math.abs(gpsSpeed - lastGpsSpeed);
+    if (jump > GPS_OUTLIER_THRESHOLD_MS) {
+      console.warn(
+        `[KalmanSpeed] GPS speed jump ${(jump * 1.94384).toFixed(1)} kn > threshold, discarding outlier`
+      );
+      return;
+    }
+  }
 
   // Kalman gain: how much to trust GPS vs prediction
   const K = P / (P + R_GPS_NOISE);
@@ -159,8 +176,8 @@ export function kalmanUpdate(gpsSpeed: number): void {
   lastGpsSpeed = gpsSpeed;
   hasGpsUpdate = true;
 
-  // Ensure non-negative
-  speedEstimate = Math.max(0.0, speedEstimate);
+  // Ensure non-negative and within cap
+  speedEstimate = Math.max(0.0, Math.min(MAX_SPEED_MS, speedEstimate));
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -197,7 +214,9 @@ export function resetKalmanSpeed(): void {
  * Call this on the first GPS update to avoid starting from 0.
  */
 export function initKalmanSpeed(initialSpeedMs: number): void {
-  speedEstimate = Math.max(0.0, initialSpeedMs);
+  const capped = Math.max(0.0, Math.min(MAX_SPEED_MS, initialSpeedMs));
+  speedEstimate = capped;
+  lastGpsSpeed = capped;
   P = R_GPS_NOISE; // Start with GPS-level uncertainty
   hasGpsUpdate = true;
 }

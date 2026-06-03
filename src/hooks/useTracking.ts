@@ -86,6 +86,8 @@ export function useTracking() {
   const allPointsRef = useRef<TrackingPoint[]>([]);
   const isTrackingRef = useRef<boolean>(false);
   const isFlushingRef = useRef<boolean>(false); // Guard against concurrent flush calls
+  // Rolling average buffer for speed smoothing (last 3 readings)
+  const speedBufferRef = useRef<number[]>([]);
 
   // tRPC mutations
   const startMutation = trpc.tracking.start.useMutation();
@@ -123,9 +125,20 @@ export function useTracking() {
     if (!isTrackingRef.current) return;
 
     // Calculate speed
+    // MAX_SPEED_KNOTS: hard cap at 30 knots (fastest racing sailboats rarely exceed this)
+    const MAX_SPEED_KNOTS = 30;
     let speedKnots: number | null = null;
     if (point.speed != null && point.speed >= 0) {
-      speedKnots = parseFloat((point.speed * MS_TO_KNOTS).toFixed(1));
+      const rawKnots = point.speed * MS_TO_KNOTS;
+      // Hard cap: discard readings above 30 knots
+      if (rawKnots <= MAX_SPEED_KNOTS) {
+        // Rolling average over last 3 readings for display smoothing
+        const buf = speedBufferRef.current;
+        buf.push(rawKnots);
+        if (buf.length > 3) buf.shift();
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+        speedKnots = parseFloat(avg.toFixed(1));
+      }
     }
 
     // Calculate distance from previous point
@@ -150,12 +163,20 @@ export function useTracking() {
         totalDistanceRef.current += segmentDistance;
       }
 
-      // Fallback speed calculation
+      // Fallback speed calculation (only when GPS speed not available)
       if (speedKnots === null && prevPos.timestamp) {
         const timeDiffSec = (point.timestamp - prevPos.timestamp) / 1000;
         if (timeDiffSec > 0 && timeDiffSec < 120 && segmentDistance > 0) {
           const speedMs = segmentDistance / timeDiffSec;
-          speedKnots = parseFloat((speedMs * MS_TO_KNOTS).toFixed(1));
+          const rawKnots = speedMs * MS_TO_KNOTS;
+          // Apply same cap as primary speed
+          if (rawKnots <= MAX_SPEED_KNOTS) {
+            const buf = speedBufferRef.current;
+            buf.push(rawKnots);
+            if (buf.length > 3) buf.shift();
+            const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+            speedKnots = parseFloat(avg.toFixed(1));
+          }
         }
       }
     }
@@ -241,6 +262,7 @@ export function useTracking() {
       pointCountRef.current = 0;
       sentCountRef.current = 0;
       allPointsRef.current = [];
+      speedBufferRef.current = []; // Reset rolling average buffer
       setTrackPoints([]);
 
       setState((prev) => ({
