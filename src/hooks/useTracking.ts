@@ -124,20 +124,13 @@ export function useTracking() {
   const handleLocationUpdate = useCallback((point: TrackingPoint) => {
     if (!isTrackingRef.current) return;
 
-    // Calculate speed
-    // MAX_SPEED_KNOTS: hard cap at 30 knots (fastest racing sailboats rarely exceed this)
+    // Calculate speed from GPS (already median-filtered in backgroundTracking)
     const MAX_SPEED_KNOTS = 30;
     let speedKnots: number | null = null;
     if (point.speed != null && point.speed >= 0) {
       const rawKnots = point.speed * MS_TO_KNOTS;
-      // Hard cap: discard readings above 30 knots
       if (rawKnots <= MAX_SPEED_KNOTS) {
-        // Rolling average over last 3 readings for display smoothing
-        const buf = speedBufferRef.current;
-        buf.push(rawKnots);
-        if (buf.length > 3) buf.shift();
-        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-        speedKnots = parseFloat(avg.toFixed(1));
+        speedKnots = parseFloat(rawKnots.toFixed(1));
       }
     }
 
@@ -169,13 +162,8 @@ export function useTracking() {
         if (timeDiffSec > 0 && timeDiffSec < 120 && segmentDistance > 0) {
           const speedMs = segmentDistance / timeDiffSec;
           const rawKnots = speedMs * MS_TO_KNOTS;
-          // Apply same cap as primary speed
           if (rawKnots <= MAX_SPEED_KNOTS) {
-            const buf = speedBufferRef.current;
-            buf.push(rawKnots);
-            if (buf.length > 3) buf.shift();
-            const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-            speedKnots = parseFloat(avg.toFixed(1));
+            speedKnots = parseFloat(rawKnots.toFixed(1));
           }
         }
       }
