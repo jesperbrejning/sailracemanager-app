@@ -368,17 +368,9 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
             </View>
           )}
 
-          {/* Manual Start/Stop Button (fallback when no auto-tracking event) */}
-          <View style={styles.controlRow}>
-            {!isTracking ? (
-              <TouchableOpacity
-                style={styles.startButton}
-                onPress={handleStart}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.startButtonText}>▶ Start Tracking</Text>
-              </TouchableOpacity>
-            ) : (
+          {/* Stop Tracking Button (only shown when tracking is active) */}
+          {isTracking && (
+            <View style={styles.controlRow}>
               <TouchableOpacity
                 style={styles.stopButton}
                 onPress={handleStop}
@@ -386,8 +378,8 @@ export default function ActiveTrackingScreen({ navigation, route, onShowEventLis
               >
                 <Text style={styles.stopButtonText}>⬛ Stop Tracking</Text>
               </TouchableOpacity>
-            )}
-          </View>
+            </View>
+          )}
 
           {/* Auto-tracking status note */}
           {activeRace?.timerStartedAt && (
